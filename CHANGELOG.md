@@ -32,6 +32,7 @@ Attention: The newest changes should be on top -->
 
 ### Added
 
+- EHN: Addition of ensemble variable to ECMWF dictionaries [#842] (https://github.com/RocketPy-Team/RocketPy/pull/842) 
 - ENH: Added Crop and Clip Methods to Function Class [#817](https://github.com/RocketPy-Team/RocketPy/pull/817)
 - DOC: Add Flight class usage documentation and update index [#841](https://github.com/RocketPy-Team/RocketPy/pull/841)
 - ENH: Discretized and No-Pickle Encoding Options [#827] (https://github.com/RocketPy-Team/RocketPy/pull/827)
