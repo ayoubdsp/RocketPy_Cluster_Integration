@@ -4,10 +4,9 @@ import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from functools import cached_property
 from os import path
-
 import numpy as np
-from ..mathutils.vector_matrix import Matrix, Vector
 from ..mathutils.function import Function, funcify_method
+from ..mathutils.vector_matrix import Vector
 from ..plots.motor_plots import _MotorPlots
 from ..prints.motor_prints import _MotorPrints
 from ..tools import (
@@ -17,7 +16,7 @@ from ..tools import (
     parallel_axis_theorem_I12,
     parallel_axis_theorem_I13,
     parallel_axis_theorem_I23,
-    tuple_handler
+    tuple_handler,
 )
 
 
@@ -170,7 +169,6 @@ class Motor(ABC):
     """
 
     # pylint: disable=too-many-statements
-    # pylint: disable=too-many-statements
     def __init__(
         self,
         thrust_source,
@@ -183,7 +181,7 @@ class Motor(ABC):
         reshape_thrust_curve=False,
         interpolation_method="linear",
         coordinate_system_orientation="nozzle_to_combustion_chamber",
-        reference_pressure=None, # <-- CORRECTION 1 : Ajout de l'argument
+        reference_pressure=None,
     ):
         """Initializes Motor class, process thrust curve and geometrical
         parameters and store results.
@@ -215,15 +213,8 @@ class Motor(ABC):
                 + '"combustion_chamber_to_nozzle".'
             )
         self.coordinate_system_orientation = coordinate_system_orientation
-        
-        self.reference_pressure = reference_pressure # <-- CORRECTION 1 : Stockage de l'argument
 
-        # --- DÉBUT CORRECTION 2 : Gestion des fichiers .eng ---
-        delimiter = ","
-        comments = "#"
-        if isinstance(thrust_source, str) and thrust_source.endswith(".eng"):
-            delimiter = " "  # Les fichiers Eng utilisent des espaces
-            comments = ";"   # Les fichiers Eng utilisent des points-virgules
+        self.reference_pressure = reference_pressure
 
         # Thrust curve definition and processing
         self.thrust = Function(
@@ -233,7 +224,7 @@ class Motor(ABC):
             interpolation_method,
             extrapolation="zero",
         )
-        # --- FIN CORRECTION 2 ---
+
         self.interpolate = interpolation_method
         # Burn time definition
         self.burn_time = tuple_handler(burn_time)
@@ -251,7 +242,7 @@ class Motor(ABC):
             self.burn_start_time, self.burn_out_time
         )
         self.max_thrust = self.thrust.max
-        
+
         self.average_thrust = self.total_impulse / self.burn_duration
 
         # Abstract methods - must be implemented by subclasses
@@ -265,8 +256,6 @@ class Motor(ABC):
         self.center_of_propellant_mass = Function(0)
         self.center_of_mass = Function(0)
 
-        # --- DÉBUT CORRECTION 3 : Utilisation des nouvelles fonctions PAT ---
-        
         # Inertia tensor for propellant referenced to the MOTOR's origin
         # Note: distance_vec_3d is the vector from the motor origin to the propellant CoM
         propellant_com_func = self.center_of_propellant_mass
@@ -274,28 +263,29 @@ class Motor(ABC):
         # Create a Function that returns the distance vector [0, 0, center_of_propellant_mass(t)]
         propellant_com_vector_func = Function(
             lambda t: Vector([0, 0, propellant_com_func(t)]),
-            inputs="t", outputs="Vector (m)"
+            inputs="t",
+            outputs="Vector (m)",
         )
 
         # Use the new specific PAT functions
         self.propellant_I_11 = parallel_axis_theorem_I11(
             self.propellant_I_11_from_propellant_CM,
             self.propellant_mass,
-            propellant_com_vector_func
+            propellant_com_vector_func,
         )
         self.propellant_I_11.set_outputs("Propellant I_11 (kg*m^2)")
 
         self.propellant_I_22 = parallel_axis_theorem_I22(
             self.propellant_I_22_from_propellant_CM,
             self.propellant_mass,
-            propellant_com_vector_func
+            propellant_com_vector_func,
         )
         self.propellant_I_22.set_outputs("Propellant I_22 (kg*m^2)")
 
         self.propellant_I_33 = parallel_axis_theorem_I33(
             self.propellant_I_33_from_propellant_CM,
             self.propellant_mass,
-            propellant_com_vector_func
+            propellant_com_vector_func,
         )
         self.propellant_I_33.set_outputs("Propellant I_33 (kg*m^2)")
 
@@ -313,8 +303,6 @@ class Motor(ABC):
             Function(0), self.propellant_mass, propellant_com_vector_func
         )
         self.propellant_I_23.set_outputs("Propellant I_23 (kg*m^2)")
-
-        # --- FIN CORRECTION 3 ---
 
         # Calculate total motor inertia relative to motor's origin
         self.I_11 = Function(lambda t: self.dry_I_11) + self.propellant_I_11
@@ -575,11 +563,14 @@ class Motor(ABC):
         """
         # Inertias relative to the motor origin (calculated in __init__)
         prop_I_11_origin = self.propellant_I_11
-        dry_I_11_origin = Function(lambda t: self.dry_I_11) # Dry inertia is constant
+        dry_I_11_origin = Function(lambda t: self.dry_I_11)  # Dry inertia is constant
 
         # Distance vectors FROM the instantaneous motor CoM TO the component CoMs
         prop_com_to_inst_com = self.center_of_propellant_mass - self.center_of_mass
-        dry_com_to_inst_com = Function(lambda t: Vector([0, 0, self.center_of_dry_mass_position])) - self.center_of_mass
+        dry_com_to_inst_com = (
+            Function(lambda t: Vector([0, 0, self.center_of_dry_mass_position]))
+            - self.center_of_mass
+        )
 
         # Apply PAT relative to the instantaneous motor CoM
         # Note: We need the negative of the distance vector for PAT formula (origin to point)
@@ -592,24 +583,6 @@ class Motor(ABC):
 
         return prop_I_11_cm + dry_I_11_cm
 
-    def I_22(self):
-        """Builds a Function for the total I_22 inertia component relative
-        to the instantaneous center of mass of the motor.
-        """
-        prop_I_22_origin = self.propellant_I_22
-        dry_I_22_origin = Function(lambda t: self.dry_I_22)
-
-        prop_com_to_inst_com = self.center_of_propellant_mass - self.center_of_mass
-        dry_com_to_inst_com = Function(lambda t: Vector([0, 0, self.center_of_dry_mass_position])) - self.center_of_mass
-
-        prop_I_22_cm = parallel_axis_theorem_I22(
-            prop_I_22_origin, self.propellant_mass, -prop_com_to_inst_com
-        )
-        dry_I_22_cm = parallel_axis_theorem_I22(
-            dry_I_22_origin, self.dry_mass, -dry_com_to_inst_com
-        )
-
-        return prop_I_22_cm + dry_I_22_cm
     @funcify_method("Time (s)", "Inertia I_22 (kg m²)")
     def I_22(self):
         """Inertia tensor 22 component, which corresponds to the inertia
@@ -1155,7 +1128,7 @@ class Motor(ABC):
         Returns
         -------
         vacuum_thrust : Function
-            The rocket's thrust in a vaccum.
+            The rocket's thrust in a vacuum.
         """
         if self.reference_pressure is None:
             warnings.warn(
@@ -1244,7 +1217,7 @@ class Motor(ABC):
             thrust_source = Function(thrust_source)
 
         data = {
-            "thrust_source": self.thrust,
+            "thrust_source": thrust_source,
             "dry_I_11": self.dry_I_11,
             "dry_I_22": self.dry_I_22,
             "dry_I_33": self.dry_I_33,
