@@ -224,7 +224,7 @@ class Rocket:
     ):
         """Initializes Rocket class, process inertial, geometrical and
         aerodynamic parameters.
-    
+
         Parameters
         ----------
         radius : int, float
@@ -275,7 +275,7 @@ class Rocket:
             coordinate system with the rocket's axis of symmetry pointing from
             the  rocket's nose cone to the rocket's tail. Default is
             "tail_to_nose".
-    
+
         Returns
         -------
         None
@@ -291,7 +291,7 @@ class Rocket:
                 "Invalid coordinate system orientation. Please choose between "
                 + '"tail_to_nose" and "nose_to_tail".'
             )
-    
+
         # Define rocket inertia attributes in SI units
         self.mass = mass
         inertia = (*inertia, 0, 0, 0) if len(inertia) == 3 else inertia
@@ -301,12 +301,12 @@ class Rocket:
         self.I_12_without_motor = inertia[3]
         self.I_13_without_motor = inertia[4]
         self.I_23_without_motor = inertia[5]
-    
+
         # Define rocket geometrical parameters in SI units
         self.center_of_mass_without_motor = center_of_mass_without_motor
         self.radius = radius
         self.area = np.pi * self.radius**2
-    
+
         # Eccentricity data initialization
         self.cm_eccentricity_x = 0
         self.cm_eccentricity_y = 0
@@ -314,7 +314,7 @@ class Rocket:
         self.cp_eccentricity_y = 0
         self.thrust_eccentricity_y = 0
         self.thrust_eccentricity_x = 0
-    
+
         # Parachute, Aerodynamic, Buttons, Controllers, Sensor data initialization
         self.parachutes = []
         self._controllers = []
@@ -323,7 +323,7 @@ class Rocket:
         self.aerodynamic_surfaces = Components()
         self.surfaces_cp_to_cdm = {}
         self.rail_buttons = Components()
-    
+
         self.cp_position = Function(
             lambda mach: 0,
             inputs="Mach Number",
@@ -342,7 +342,7 @@ class Rocket:
             inputs=["Mach", "Time (s)"],
             outputs="Stability Margin (c)",
         )
-    
+
         # Define aerodynamic drag coefficients
         self.power_off_drag = Function(
             power_off_drag,
@@ -358,37 +358,41 @@ class Rocket:
             "linear",
             "constant",
         )
-    
+
         # Create a, possibly, temporary empty motor
         # self.motors = Components()  # currently unused, only 1 motor is supported
         self.add_motor(motor=EmptyMotor(), position=0)
-    
+
         # Important dynamic inertial quantities
         self.center_of_mass = None
         self.reduced_mass = None
         self.total_mass = None
         self.dry_mass = None
-        self.propellant_initial_mass = 0 # Ajout pour la cohérence
-    
+        self.propellant_initial_mass = 0  # Ajout pour la cohérence
+
         # Initialize plots and prints object
         self.prints = _RocketPrints(self)
         self.plots = _RocketPlots(self)
         self._full_rocket_update()
-        
+
     def _full_rocket_update(self):
         """
         Centralized method to update all rocket properties after adding or modifying a motor.
         """
-        if hasattr(self.motor, 'propellant_initial_mass'):
+        if hasattr(self.motor, "propellant_initial_mass"):
             self.propellant_initial_mass = self.motor.propellant_initial_mass
         else:
-             self.propellant_initial_mass = self.motor.propellant_mass.get_value_opt(0) if self.motor.propellant_mass else 0
+            self.propellant_initial_mass = (
+                self.motor.propellant_mass.get_value_opt(0)
+                if self.motor.propellant_mass
+                else 0
+            )
 
         self.evaluate_dry_mass()
         self.evaluate_total_mass()
         self.evaluate_center_of_dry_mass()
-        
-        if hasattr(self.motor, 'nozzle_position'):
+
+        if hasattr(self.motor, "nozzle_position"):
             self.nozzle_position = self.motor.nozzle_position
         else:
             self.nozzle_position = self.motor_position
@@ -406,15 +410,16 @@ class Rocket:
         self.evaluate_com_to_cdm_function()
         self.evaluate_nozzle_gyration_tensor()
         self.evaluate_structural_mass_ratio()
-        @property
-        def nosecones(self):
-            """A list containing all the nose cones currently added to the rocket."""
-            return self.aerodynamic_surfaces.get_by_type(NoseCone)
-    
-        @property
-        def fins(self):
-            """A list containing all the fins currently added to the rocket."""
-            return self.aerodynamic_surfaces.get_by_type(Fins)
+
+    @property
+    def nosecones(self):
+        """A list containing all the nose cones currently added to the rocket."""
+        return self.aerodynamic_surfaces.get_by_type(NoseCone)
+
+    @property
+    def fins(self):
+        """A list containing all the fins currently added to the rocket."""
+        return self.aerodynamic_surfaces.get_by_type(Fins)
 
     @property
     def tails(self):
@@ -464,32 +469,36 @@ class Rocket:
         return self.dry_mass
 
     def evaluate_structural_mass_ratio(self):
-            """Calculates and returns the rocket's structural mass ratio.
-            It is defined as the ratio between of the dry mass
-            (Motor + Rocket) and the initial total mass
-            (Motor + Propellant + Rocket).
-    
-            Returns
-            -------
-            self.structural_mass_ratio: float
-                Initial structural mass ratio dry mass (Rocket + Motor) (kg)
-                divided by total mass (Rocket + Motor + Propellant) (kg).
-            """
-            try:
-                dry_mass = self.dry_mass if self.dry_mass is not None else self.mass
-                propellant_mass_initial = self.propellant_initial_mass
-                total_mass_initial = dry_mass + propellant_mass_initial
-        
-                if total_mass_initial <= 1e-9:
-                    print("Warning: Total initial mass is near zero, setting structural mass ratio to 1.0")
-                    self.structural_mass_ratio = 1.0
-                else:
-                    self.structural_mass_ratio = dry_mass / total_mass_initial
-            except (AttributeError, TypeError) as e:
-                print(f"Warning: Could not calculate structural mass ratio, setting to 1.0. Details: {e}")
+        """Calculates and returns the rocket's structural mass ratio.
+        It is defined as the ratio between of the dry mass
+        (Motor + Rocket) and the initial total mass
+        (Motor + Propellant + Rocket).
+
+        Returns
+        -------
+        self.structural_mass_ratio: float
+            Initial structural mass ratio dry mass (Rocket + Motor) (kg)
+            divided by total mass (Rocket + Motor + Propellant) (kg).
+        """
+        try:
+            dry_mass = self.dry_mass if self.dry_mass is not None else self.mass
+            propellant_mass_initial = self.propellant_initial_mass
+            total_mass_initial = dry_mass + propellant_mass_initial
+
+            if total_mass_initial <= 1e-9:
+                print(
+                    "Warning: Total initial mass is near zero, setting structural mass ratio to 1.0"
+                )
                 self.structural_mass_ratio = 1.0
-        
-            return self.structural_mass_ratio
+            else:
+                self.structural_mass_ratio = dry_mass / total_mass_initial
+        except (AttributeError, TypeError) as e:
+            print(
+                f"Warning: Could not calculate structural mass ratio, setting to 1.0. Details: {e}"
+            )
+            self.structural_mass_ratio = 1.0
+
+        return self.structural_mass_ratio
 
     def evaluate_center_of_mass(self):
         """Evaluates rocket center of mass position relative to user defined
@@ -503,19 +512,18 @@ class Rocket:
             See :doc:`Positions and Coordinate Systems </user/positions>`
             for more information.
         """
-        # Transformer la position constante en une fonction qui renvoie toujours le même vecteur
+
         com_without_motor_vec = Function(
             lambda t: Vector([0, 0, self.center_of_mass_without_motor]),
             inputs="t",
-            outputs="Vector (m)"
+            outputs="Vector (m)",
         )
 
-        # Calculer la moyenne pondérée des fonctions de CoM
         self.center_of_mass = (
             com_without_motor_vec * self.mass
             + self.motor_center_of_mass_position * self.motor.total_mass
         ) / self.total_mass
-        
+
         self.center_of_mass.set_inputs("Time (s)")
         self.center_of_mass.set_outputs("Center of Mass Position (m)")
         self.center_of_mass.set_title(
@@ -533,19 +541,18 @@ class Rocket:
         self.center_of_dry_mass_position : Vector
             Rocket's center of dry mass position (with unloaded motor)
         """
-        # Convertir la position scalaire du CoM de la structure en vecteur 3D
+
         com_without_motor_vec = Vector([0, 0, self.center_of_mass_without_motor])
-        
-        # motor_center_of_dry_mass_position est déjà un vecteur provenant du ClusterMotor
+
+        # motor_center_of_dry_mass_position
         motor_com_dry_vec = self.motor_center_of_dry_mass_position
-        
-        # Effectuer la moyenne pondérée vectorielle
+
         self.center_of_dry_mass_position = (
-            com_without_motor_vec * self.mass
-            + motor_com_dry_vec * self.motor.dry_mass
+            com_without_motor_vec * self.mass + motor_com_dry_vec * self.motor.dry_mass
         ) / self.dry_mass
-        
+
         return self.center_of_dry_mass_position
+
     def evaluate_reduced_mass(self):
         """Calculates and returns the rocket's total reduced mass. The reduced
         mass is defined as the product of the propellant mass and the rocket dry
@@ -660,10 +667,7 @@ class Rocket:
         """
         self.stability_margin.set_source(
             lambda mach, time: (
-                (
-                    self.center_of_mass(time).z
-                    - self.cp_position.get_value_opt(mach)
-                )
+                (self.center_of_mass(time).z - self.cp_position.get_value_opt(mach))
                 / (2 * self.radius)
             )
             * self._csys
@@ -671,12 +675,10 @@ class Rocket:
         return self.stability_margin
 
     def evaluate_static_margin(self):
-        """Calculates the static margin of the rocket as a function of time.
-        """
+        """Calculates the static margin of the rocket as a function of time."""
         self.static_margin.set_source(
             lambda time: (
-                self.center_of_mass(time).z
-                - self.cp_position.get_value_opt(0)
+                self.center_of_mass(time).z - self.cp_position.get_value_opt(0)
             )
             / (2 * self.radius)
         )
@@ -684,7 +686,7 @@ class Rocket:
         self.static_margin.set_inputs("Time (s)")
         self.static_margin.set_outputs("Static Margin (c)")
         self.static_margin.set_title("Static Margin")
-        if hasattr(self.motor, 'burn_out_time'):
+        if hasattr(self.motor, "burn_out_time"):
             self.static_margin.set_discrete(
                 lower=0, upper=self.motor.burn_out_time, samples=200
             )
@@ -700,8 +702,9 @@ class Rocket:
         motor_dry_mass = self.motor.dry_mass
         mass = self.mass
 
-        # Convertir la position scalaire du CoM de la structure en un objet Vector
-        center_of_mass_without_motor_vec = Vector([0, 0, self.center_of_mass_without_motor])
+        center_of_mass_without_motor_vec = Vector(
+            [0, 0, self.center_of_mass_without_motor]
+        )
 
         # Compute axes distances (CDM: Center of Dry Mass) using vector subtraction
         center_of_mass_without_motor_to_CDM = (
@@ -711,50 +714,32 @@ class Rocket:
             self.motor_center_of_dry_mass_position - self.center_of_dry_mass_position
         )
 
-      
-        
-        # Vecteurs de distance
         d_rocket = center_of_mass_without_motor_to_CDM
         d_motor = motor_center_of_dry_mass_to_CDM
-        
-        # Calcul des termes diagonaux
+
         self.dry_I_11 = parallel_axis_theorem_I11(
             self.I_11_without_motor, mass, d_rocket
-        ) + parallel_axis_theorem_I11(
-            self.motor.dry_I_11, motor_dry_mass, d_motor
-        )
+        ) + parallel_axis_theorem_I11(self.motor.dry_I_11, motor_dry_mass, d_motor)
 
         self.dry_I_22 = parallel_axis_theorem_I22(
             self.I_22_without_motor, mass, d_rocket
-        ) + parallel_axis_theorem_I22(
-            self.motor.dry_I_22, motor_dry_mass, d_motor
-        )
+        ) + parallel_axis_theorem_I22(self.motor.dry_I_22, motor_dry_mass, d_motor)
 
         self.dry_I_33 = parallel_axis_theorem_I33(
             self.I_33_without_motor, mass, d_rocket
-        ) + parallel_axis_theorem_I33(
-            self.motor.dry_I_33, motor_dry_mass, d_motor
-        )
+        ) + parallel_axis_theorem_I33(self.motor.dry_I_33, motor_dry_mass, d_motor)
 
-        # Calcul des produits d'inertie
         self.dry_I_12 = parallel_axis_theorem_I12(
             self.I_12_without_motor, mass, d_rocket
-        ) + parallel_axis_theorem_I12(
-            self.motor.dry_I_12, motor_dry_mass, d_motor
-        )
-        
+        ) + parallel_axis_theorem_I12(self.motor.dry_I_12, motor_dry_mass, d_motor)
+
         self.dry_I_13 = parallel_axis_theorem_I13(
             self.I_13_without_motor, mass, d_rocket
-        ) + parallel_axis_theorem_I13(
-            self.motor.dry_I_13, motor_dry_mass, d_motor
-        )
-        
+        ) + parallel_axis_theorem_I13(self.motor.dry_I_13, motor_dry_mass, d_motor)
+
         self.dry_I_23 = parallel_axis_theorem_I23(
             self.I_23_without_motor, mass, d_rocket
-        ) + parallel_axis_theorem_I23(
-            self.motor.dry_I_23, motor_dry_mass, d_motor
-        )
-        
+        ) + parallel_axis_theorem_I23(self.motor.dry_I_23, motor_dry_mass, d_motor)
 
         return (
             self.dry_I_11,
@@ -764,29 +749,21 @@ class Rocket:
             self.dry_I_13,
             self.dry_I_23,
         )
-    
+
     def evaluate_inertias(self):
         """Calculates and returns the rocket's inertias relative to
         the rocket's center of dry mass. The inertias are saved and returned
         in units of kg*m².
         """
-        # Obtenir la masse du propergol comme une fonction du temps
+
         prop_mass = self.motor.propellant_mass
 
-        # Créer une fonction qui renvoie la position constante du CDM au fil du temps
         cdm_position_func = Function(
-            lambda t: self.center_of_dry_mass_position,
-            inputs="t",
-            outputs="Vector (m)"
+            lambda t: self.center_of_dry_mass_position, inputs="t", outputs="Vector (m)"
         )
-        
-        # Ceci est maintenant une soustraction valide entre deux objets Function
+
         CDM_to_CPM = cdm_position_func - self.center_of_propellant_position
 
-        # --- DÉBUT DES MODIFICATIONS : Utilisation des fonctions PAT spécifiques ---
-
-        # Calculer la partie de l'inertie qui varie dans le temps (due au propergol)
-        # en utilisant les fonctions PAT dynamiques
         propellant_inertia_term_11 = parallel_axis_theorem_I11(
             self.motor.propellant_I_11, prop_mass, CDM_to_CPM
         )
@@ -806,18 +783,14 @@ class Rocket:
             self.motor.propellant_I_23, prop_mass, CDM_to_CPM
         )
 
-        # Convertir les inerties sèches constantes en fonctions constantes avant de les additionner
         self.I_11 = Function(lambda t: self.dry_I_11) + propellant_inertia_term_11
         self.I_22 = Function(lambda t: self.dry_I_22) + propellant_inertia_term_22
         self.I_33 = Function(lambda t: self.dry_I_33) + propellant_inertia_term_33
-        
-        # Faire de même pour les produits d'inertie
+
         self.I_12 = Function(lambda t: self.dry_I_12) + propellant_inertia_term_12
         self.I_13 = Function(lambda t: self.dry_I_13) + propellant_inertia_term_13
         self.I_23 = Function(lambda t: self.dry_I_23) + propellant_inertia_term_23
-        # --- FIN DES MODIFICATIONS ---
 
-        # Renvoyer les inerties en tant qu'objets Function
         return (
             self.I_11,
             self.I_22,
@@ -862,26 +835,20 @@ class Rocket:
         """Evaluates the z-coordinate of the center of mass (COM) relative to
         the center of dry mass (CDM).
         """
-        # Extraire la composante Z de la fonction de position du CoM du propergol
+
         cpm_z_func = Function(
-            lambda t: self.center_of_propellant_position(t).z,
-            inputs="t"
+            lambda t: self.center_of_propellant_position(t).z, inputs="t"
         )
 
-        # Obtenir la composante Z du vecteur statique du CoM sec
         cdm_z_scalar = self.center_of_dry_mass_position.z
 
-        # Toutes les opérations sont maintenant entre scalaires et fonctions scalaires
         self.com_to_cdm_function = (
             -1
-            * (
-                (cpm_z_func - cdm_z_scalar)
-                * self._csys
-            )
+            * ((cpm_z_func - cdm_z_scalar) * self._csys)
             * self.motor.propellant_mass
             / self.total_mass
         )
-        
+
         self.com_to_cdm_function.set_inputs("Time (s)")
         self.com_to_cdm_function.set_outputs("Z Coordinate COM to CDM (m)")
         self.com_to_cdm_function.set_title("Z Coordinate COM to CDM")
@@ -947,77 +914,79 @@ class Rocket:
             ]
         )
 
-
     def add_motor(self, motor, position=0):
         """
         Adds a motor or a motor cluster to the rocket. This method is universal
         and handles standard motors, EmptyMotor, and ClusterMotor objects.
         """
         if hasattr(self, "motor") and not isinstance(self.motor, EmptyMotor):
-            print(
-                "A motor is already attached. Overwriting previous motor."
-            )
-        
+            print("A motor is already attached. Overwriting previous motor.")
+
         self.motor = motor
         self.motor_position = position
-        
-        # Gère le moteur vide (pendant l'initialisation de la fusée)
+
         if isinstance(motor, EmptyMotor):
-            self.center_of_propellant_position = Function(lambda t: Vector([0, 0, position]))
-            self.motor_center_of_mass_position = Function(lambda t: Vector([0, 0, position]))
+            self.center_of_propellant_position = Function(
+                lambda t: Vector([0, 0, position])
+            )
+            self.motor_center_of_mass_position = Function(
+                lambda t: Vector([0, 0, position])
+            )
             self.motor_center_of_dry_mass_position = Vector([0, 0, position])
             self.nozzle_position = position
             self.total_mass_flow_rate = Function(0)
-            return 
-        
-        _ = self._csys * getattr(motor, '_csys', 1) 
-        
-       
-        is_cluster = hasattr(motor, 'get_total_thrust_vector')
+            return
+
+        _ = self._csys * getattr(motor, "_csys", 1)
+
+        is_cluster = hasattr(motor, "get_total_thrust_vector")
 
         if is_cluster:
-            
+
             self.center_of_propellant_position = motor.center_of_propellant_mass
             self.motor_center_of_mass_position = motor.center_of_mass
             self.motor_center_of_dry_mass_position = motor.center_of_dry_mass_position
         else:
-            
+
             self.motor_center_of_mass_position = Function(
                 lambda t: Vector([0, 0, motor.center_of_mass(t) * _ + position]),
-                inputs="t", outputs="Vector (m)"
+                inputs="t",
+                outputs="Vector (m)",
             )
             self.center_of_propellant_position = Function(
-                lambda t: Vector([0, 0, motor.center_of_propellant_mass(t) * _ + position]),
-                inputs="t", outputs="Vector (m)"
+                lambda t: Vector(
+                    [0, 0, motor.center_of_propellant_mass(t) * _ + position]
+                ),
+                inputs="t",
+                outputs="Vector (m)",
             )
-            self.motor_center_of_dry_mass_position = Vector([0, 0, motor.center_of_dry_mass_position * _ + position])
+            self.motor_center_of_dry_mass_position = Vector(
+                [0, 0, motor.center_of_dry_mass_position * _ + position]
+            )
 
         self.nozzle_position = motor.nozzle_position * _ + position
         self.total_mass_flow_rate = motor.total_mass_flow_rate
-        
-       
+
         self._full_rocket_update()
 
     def add_cluster_motor(self, motors, positions, orientations=None):
-            """
-            Creates a ClusterMotor and adds it to the rocket.
-            """
-            # This line assumes your ClusterMotor.py file is in rocketpy/motors/
-            from rocketpy.motors.ClusterMotor import ClusterMotor
-    
-            cluster = ClusterMotor(motors, positions, orientations)
-            
-            self.motor = cluster
-            self.motor_position = 0 # Positions are handled within the cluster
-    
-            self.center_of_propellant_position = self.motor.center_of_propellant_mass
-            self.motor_center_of_mass_position = self.motor.center_of_mass
-            self.motor_center_of_dry_mass_position = self.motor.center_of_dry_mass_position
-            self.total_mass_flow_rate = self.motor.total_mass_flow_rate
-            
-            # Call the centralized update method
-            self._full_rocket_update()
-            return cluster
+        """
+        Creates a ClusterMotor and adds it to the rocket.
+        """
+
+        cluster = ClusterMotor(motors, positions, orientations)
+
+        self.motor = cluster
+        self.motor_position = 0  # Positions are handled within the cluster
+
+        self.center_of_propellant_position = self.motor.center_of_propellant_mass
+        self.motor_center_of_mass_position = self.motor.center_of_mass
+        self.motor_center_of_dry_mass_position = self.motor.center_of_dry_mass_position
+        self.total_mass_flow_rate = self.motor.total_mass_flow_rate
+
+        # Call the centralized update method
+        self._full_rocket_update()
+        return cluster
 
     def __add_single_surface(self, surface, position):
         """Adds a single aerodynamic surface to the rocket. Makes checks for
