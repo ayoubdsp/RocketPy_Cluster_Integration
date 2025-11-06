@@ -23,6 +23,8 @@ import pytz
 from cftime import num2pydate
 from matplotlib.patches import Ellipse
 from packaging import version as packaging_version
+from rocketpy.mathutils.function import Function
+from rocketpy.mathutils.vector_matrix import Vector
 
 # Mapping of module name and the name of the package that should be installed
 INSTALL_MAPPING = {"IPython": "ipython"}
@@ -1019,131 +1021,115 @@ def exponential_backoff(max_attempts, base_delay=1, max_delay=60):
     return decorator
 
 
-# ######################################################################
-# DÉBUT DU BLOC CORRIGÉ - THÉORÈME DES AXES PARALLÈLES (PAT)
-# ######################################################################
+
 
 def _pat_dynamic_helper(com_inertia_moment, mass, distance_vec_3d, axes_term_lambda):
-    """
-    Helper interne pour gérer la logique dynamique/statique du PAT pour
-    les termes diagonaux (I11, I22, I33).
-    """
-    # Importer localement pour éviter les dépendances circulaires
-    from rocketpy.mathutils.function import Function
-    from rocketpy.mathutils.vector_matrix import Vector
+   
+
 
     is_dynamic = (
-        isinstance(com_inertia_moment, Function) or
-        isinstance(mass, Function) or
-        isinstance(distance_vec_3d, Function)
+        isinstance(com_inertia_moment, Function)
+        or isinstance(mass, Function)
+        or isinstance(distance_vec_3d, Function)
     )
 
     def get_val(arg, t):
-        """Obtient la valeur de l'argument à l'instant t."""
+        
         return arg(t) if isinstance(arg, Function) else arg
 
     if not is_dynamic:
-        # Cas statique
+
         d_vec = Vector(distance_vec_3d)
         mass_term = mass * axes_term_lambda(d_vec)
         return com_inertia_moment + mass_term
     else:
-        # Cas dynamique : retourne une nouvelle Fonction
+
         def new_source(t):
             d_vec_t = get_val(distance_vec_3d, t)
             mass_t = get_val(mass, t)
             inertia_t = get_val(com_inertia_moment, t)
-            
+
             mass_term = mass_t * axes_term_lambda(d_vec_t)
             return inertia_t + mass_term
 
         return Function(new_source, inputs="t", outputs="Inertia (kg*m^2)")
 
-def _pat_dynamic_product_helper(com_inertia_product, mass, distance_vec_3d, product_term_lambda):
-    """
-    Helper interne pour gérer la logique dynamique/statique du PAT pour
-    les produits d'inertie (I12, I13, I23).
-    """
-    # Importer localement pour éviter les dépendances circulaires
-    from rocketpy.mathutils.function import Function
-    from rocketpy.mathutils.vector_matrix import Vector
+
+def _pat_dynamic_product_helper(
+    com_inertia_product, mass, distance_vec_3d, product_term_lambda
+):
+   
 
     is_dynamic = (
-        isinstance(com_inertia_product, Function) or
-        isinstance(mass, Function) or
-        isinstance(distance_vec_3d, Function)
+        isinstance(com_inertia_product, Function)
+        or isinstance(mass, Function)
+        or isinstance(distance_vec_3d, Function)
     )
 
     def get_val(arg, t):
-        """Obtient la valeur de l'argument à l'instant t."""
+        
         return arg(t) if isinstance(arg, Function) else arg
 
     if not is_dynamic:
-        # Cas statique
+      
         d_vec = Vector(distance_vec_3d)
         mass_term = mass * product_term_lambda(d_vec)
         return com_inertia_product + mass_term
     else:
-        # Cas dynamique : retourne une nouvelle Fonction
+
         def new_source(t):
             d_vec_t = get_val(distance_vec_3d, t)
             mass_t = get_val(mass, t)
             inertia_t = get_val(com_inertia_product, t)
-            
+
             mass_term = mass_t * product_term_lambda(d_vec_t)
             return inertia_t + mass_term
-        
+
         return Function(new_source, inputs="t", outputs="Inertia (kg*m^2)")
 
-# --- Fonctions Publiques pour le Théorème des Axes Parallèles ---
 
 def parallel_axis_theorem_I11(com_inertia_moment, mass, distance_vec_3d):
-    """
-    Calcule l'inertie I_11 (tangage) relative à un nouvel axe en utilisant le PAT.
-    Formule : I_11 = I_cm_11 + m * (d_y^2 + d_z^2)
-    """
-    return _pat_dynamic_helper(com_inertia_moment, mass, distance_vec_3d, 
-                               lambda d_vec: d_vec.y**2 + d_vec.z**2)
+
+    return _pat_dynamic_helper(
+        com_inertia_moment, mass, distance_vec_3d, lambda d_vec: d_vec.y**2 + d_vec.z**2
+    )
+
 
 def parallel_axis_theorem_I22(com_inertia_moment, mass, distance_vec_3d):
-    """
-    Calcule l'inertie I_22 (lacet) relative à un nouvel axe en utilisant le PAT.
-    Formule : I_22 = I_cm_22 + m * (d_x^2 + d_z^2)
-    """
-    return _pat_dynamic_helper(com_inertia_moment, mass, distance_vec_3d, 
-                               lambda d_vec: d_vec.x**2 + d_vec.z**2)
+
+    return _pat_dynamic_helper(
+        com_inertia_moment, mass, distance_vec_3d, lambda d_vec: d_vec.x**2 + d_vec.z**2
+    )
+
 
 def parallel_axis_theorem_I33(com_inertia_moment, mass, distance_vec_3d):
-    """
-    Calcule l'inertie I_33 (roulis) relative à un nouvel axe en utilisant le PAT.
-    Formule : I_33 = I_cm_33 + m * (d_x^2 + d_y^2)
-    """
-    return _pat_dynamic_helper(com_inertia_moment, mass, distance_vec_3d, 
-                               lambda d_vec: d_vec.x**2 + d_vec.y**2)
+
+    return _pat_dynamic_helper(
+        com_inertia_moment, mass, distance_vec_3d, lambda d_vec: d_vec.x**2 + d_vec.y**2
+    )
+
 
 def parallel_axis_theorem_I12(com_inertia_product, mass, distance_vec_3d):
-    """
-    Calcule le produit d'inertie I_12 relatif à un nouvel axe en utilisant le PAT.
-    Formule : I_12 = I_cm_12 + m * d_x * d_y
-    """
-    return _pat_dynamic_product_helper(com_inertia_product, mass, distance_vec_3d, 
-                                       lambda d_vec: d_vec.x * d_vec.y)
+
+    return _pat_dynamic_product_helper(
+        com_inertia_product, mass, distance_vec_3d, lambda d_vec: d_vec.x * d_vec.y
+    )
+
 
 def parallel_axis_theorem_I13(com_inertia_product, mass, distance_vec_3d):
-    """
-    Calcule le produit d'inertie I_13 relatif à un nouvel axe en utilisant le PAT.
-    Formule : I_13 = I_cm_13 + m * d_x * d_z
-    """
-    return _pat_dynamic_product_helper(com_inertia_product, mass, distance_vec_3d, 
-                                       lambda d_vec: d_vec.x * d_vec.z)
+
+    return _pat_dynamic_product_helper(
+        com_inertia_product, mass, distance_vec_3d, lambda d_vec: d_vec.x * d_vec.z
+    )
+
 
 def parallel_axis_theorem_I23(com_inertia_product, mass, distance_vec_3d):
-    """
-    Calcule le produit d'inertie I_23 relatif à un nouvel axe en utilisant le PAT.
-    Formule : I_23 = I_cm_23 + m * d_y * d_z
-    """
-    return _pat_dynamic_product_helper(com_inertia_product, mass, distance_vec_3d, 
-                                       lambda d_vec: d_vec.y * d_vec.z)
+
+    return _pat_dynamic_product_helper(
+        com_inertia_product, mass, distance_vec_3d, lambda d_vec: d_vec.y * d_vec.z
+    )
+
+
 # Flight
 def quaternions_to_precession(e0, e1, e2, e3):
     """Calculates the Precession angle
