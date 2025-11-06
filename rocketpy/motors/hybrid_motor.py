@@ -1,15 +1,9 @@
 from functools import cached_property
-
-
-
 from ..mathutils.function import Function, funcify_method, reset_funcified_methods
 from ..plots.hybrid_motor_plots import _HybridMotorPlots
-from ..prints.hybrid_motor_prints import _HybridMotorPrints
-from .liquid_motor import LiquidMotor
 from .motor import Motor
 from .solid_motor import SolidMotor
-# Import the new specific PAT functions instead
-from ..tools import (  # Utilisez ..tools si hybrid_motor.py est dans rocketpy/motors/
+from ..tools import (
     parallel_axis_theorem_I11,
     parallel_axis_theorem_I22,
     parallel_axis_theorem_I33,
@@ -17,8 +11,8 @@ from ..tools import (  # Utilisez ..tools si hybrid_motor.py est dans rocketpy/m
     parallel_axis_theorem_I13,
     parallel_axis_theorem_I23,
 )
-# Ajoutez également l'import de Vector s'il n'est pas déjà là
 from ..mathutils.vector_matrix import Vector
+
 
 class HybridMotor(Motor):
     """Class to specify characteristics and useful operations for Hybrid
@@ -208,7 +202,6 @@ class HybridMotor(Motor):
     # pylint: disable=too-many-locals, too-many-statements
     def __init__(
         self,
-        # --- Paramètres obligatoires (sans défaut) ---
         thrust_source,
         dry_mass,
         dry_inertia,
@@ -222,17 +215,12 @@ class HybridMotor(Motor):
         grain_initial_inner_radius,
         grain_initial_height,
         grains_center_of_mass_position,
-        tanks_mass,                      # Déplacé AVANT les défauts
-        oxidizer_initial_mass,           # Déplacé AVANT les défauts
-        oxidizer_mass_flow_rate_curve,   # Déplacé AVANT les défauts
-        oxidizer_density,                # Déplacé AVANT les défauts
-        oxidizer_tanks_geometries,       # Déplacé AVANT les défauts
-        oxidizer_tanks_positions,        # Déplacé AVANT les défauts
-        # --- Paramètres facultatifs (avec défaut) ---
-        grain_initial_inertia=(0, 0, 0), # Maintenant APRÈS les obligatoires
-        oxidizer_tanks_initial_liquid_level=None,
-        oxidizer_tanks_initial_ullage_mass=None, # Note: ullage mass defaults to None in Tanks anyway
-        oxidizer_tanks_initial_ullage_volume=None,
+        tanks_mass,
+        oxidizer_initial_mass,
+        oxidizer_mass_flow_rate_curve,
+        oxidizer_density,
+        oxidizer_tanks_geometries,
+        oxidizer_tanks_positions,
         oxidizer_initial_inertia=(0, 0, 0),
         nozzle_position=0,
         reshape_thrust_curve=False,
@@ -412,7 +400,6 @@ class HybridMotor(Motor):
             grain_initial_inner_radius=grain_initial_inner_radius,
             grain_initial_height=grain_initial_height,
             grains_center_of_mass_position=grains_center_of_mass_position,
-            grain_initial_inertia=grain_initial_inertia,
             nozzle_position=nozzle_position,
             reshape_thrust_curve=reshape_thrust_curve,
             interpolation_method=interpolation_method,
@@ -451,9 +438,9 @@ class HybridMotor(Motor):
         self.dry_I_13 = dry_inertia[4]
         self.dry_I_23 = dry_inertia[5]
         # TODO: Calculate tanks inertia tensor based on their geometry and mass
-
+        """
         # Initialize Tanks object
-        self.tanks = Tanks(
+        self.tanks = Tank(
             geometries=oxidizer_tanks_geometries,
             positions=oxidizer_tanks_positions,
             fluid_mass=self.oxidizer_mass,
@@ -462,7 +449,7 @@ class HybridMotor(Motor):
             initial_ullage_mass=oxidizer_tanks_initial_ullage_mass,
             initial_ullage_volume=oxidizer_tanks_initial_ullage_volume,
         )
-
+        """
         # Store important functions
         self.liquid_propellant_mass = self.tanks.liquid_mass
         self.gas_propellant_mass = self.tanks.gas_mass
@@ -494,13 +481,21 @@ class HybridMotor(Motor):
         # Ensure division by zero is handled if needed, although propellant mass shouldn't be zero initially
 
         # Create Functions returning distance vectors relative to the overall propellant CoM
-        liquid_com_to_prop_com = self.center_of_liquid_propellant_mass - self._center_of_propellant_mass
-        grain_com_to_prop_com = self.center_of_grain_propellant_mass - self._center_of_propellant_mass
+        liquid_com_to_prop_com = (
+            self.center_of_liquid_propellant_mass - self._center_of_propellant_mass
+        )
+        grain_com_to_prop_com = (
+            self.center_of_grain_propellant_mass - self._center_of_propellant_mass
+        )
 
         # Convert scalar distances to 3D vectors for PAT functions
         # The distance is along the Z-axis in the motor's coordinate system
-        liquid_dist_vec_func = Function(lambda t: Vector([0, 0, liquid_com_to_prop_com(t)]), inputs='t')
-        grain_dist_vec_func = Function(lambda t: Vector([0, 0, grain_com_to_prop_com(t)]), inputs='t')
+        liquid_dist_vec_func = Function(
+            lambda t: Vector([0, 0, liquid_com_to_prop_com(t)]), inputs="t"
+        )
+        grain_dist_vec_func = Function(
+            lambda t: Vector([0, 0, grain_com_to_prop_com(t)]), inputs="t"
+        )
 
         # Apply PAT using the new specific functions
         # Inertias relative to component CoMs are needed (e.g., self.liquid_propellant_I_11_from_liquid_CM)
@@ -509,43 +504,49 @@ class HybridMotor(Motor):
         # --- I_11 ---
         # Assuming self.liquid_propellant_I_11 refers to inertia relative to liquid CoM
         liquid_I_11_prop_com = parallel_axis_theorem_I11(
-            self.liquid_propellant_I_11, # Inertia relative to liquid's own CoM
+            self.liquid_propellant_I_11,  # Inertia relative to liquid's own CoM
             self.liquid_propellant_mass,
-            liquid_dist_vec_func # Distance from total prop CoM to liquid CoM
+            liquid_dist_vec_func,  # Distance from total prop CoM to liquid CoM
         )
         # Assuming self.grain_propellant_I_11 refers to inertia relative to grain CoM
         grain_I_11_prop_com = parallel_axis_theorem_I11(
-            self.grain_propellant_I_11, # Inertia relative to grain's own CoM
+            self.grain_propellant_I_11,  # Inertia relative to grain's own CoM
             self.grain_propellant_mass,
-            grain_dist_vec_func # Distance from total prop CoM to grain CoM
+            grain_dist_vec_func,  # Distance from total prop CoM to grain CoM
         )
-        self.propellant_I_11_from_propellant_CM = liquid_I_11_prop_com + grain_I_11_prop_com
+        self.propellant_I_11_from_propellant_CM = (
+            liquid_I_11_prop_com + grain_I_11_prop_com
+        )
 
         # --- I_22 ---
         liquid_I_22_prop_com = parallel_axis_theorem_I22(
-            self.liquid_propellant_I_22, # Inertia relative to liquid's own CoM
+            self.liquid_propellant_I_22,  # Inertia relative to liquid's own CoM
             self.liquid_propellant_mass,
-            liquid_dist_vec_func
+            liquid_dist_vec_func,
         )
         grain_I_22_prop_com = parallel_axis_theorem_I22(
-            self.grain_propellant_I_22, # Inertia relative to grain's own CoM
+            self.grain_propellant_I_22,  # Inertia relative to grain's own CoM
             self.grain_propellant_mass,
-            grain_dist_vec_func
+            grain_dist_vec_func,
         )
-        self.propellant_I_22_from_propellant_CM = liquid_I_22_prop_com + grain_I_22_prop_com
+        self.propellant_I_22_from_propellant_CM = (
+            liquid_I_22_prop_com + grain_I_22_prop_com
+        )
 
         # --- I_33 ---
         liquid_I_33_prop_com = parallel_axis_theorem_I33(
-            self.liquid_propellant_I_33, # Inertia relative to liquid's own CoM
+            self.liquid_propellant_I_33,  # Inertia relative to liquid's own CoM
             self.liquid_propellant_mass,
-            liquid_dist_vec_func
+            liquid_dist_vec_func,
         )
         grain_I_33_prop_com = parallel_axis_theorem_I33(
-            self.grain_propellant_I_33, # Inertia relative to grain's own CoM
+            self.grain_propellant_I_33,  # Inertia relative to grain's own CoM
             self.grain_propellant_mass,
-            grain_dist_vec_func
+            grain_dist_vec_func,
         )
-        self.propellant_I_33_from_propellant_CM = liquid_I_33_prop_com + grain_I_33_prop_com
+        self.propellant_I_33_from_propellant_CM = (
+            liquid_I_33_prop_com + grain_I_33_prop_com
+        )
 
         # --- Products of Inertia (I_12, I_13, I_23) ---
         # Assume components PoI are 0 relative to their own CoM due to axisymmetry
@@ -559,7 +560,9 @@ class HybridMotor(Motor):
             Function(0), self.grain_propellant_mass, grain_dist_vec_func
         )
         # Store intermediate result if needed by Motor.__init__ later, prefix with '_' if not part of public API
-        self._propellant_I_12_from_propellant_CM = liquid_I_12_prop_com + grain_I_12_prop_com
+        self._propellant_I_12_from_propellant_CM = (
+            liquid_I_12_prop_com + grain_I_12_prop_com
+        )
 
         # I_13
         liquid_I_13_prop_com = parallel_axis_theorem_I13(
@@ -568,7 +571,9 @@ class HybridMotor(Motor):
         grain_I_13_prop_com = parallel_axis_theorem_I13(
             Function(0), self.grain_propellant_mass, grain_dist_vec_func
         )
-        self._propellant_I_13_from_propellant_CM = liquid_I_13_prop_com + grain_I_13_prop_com
+        self._propellant_I_13_from_propellant_CM = (
+            liquid_I_13_prop_com + grain_I_13_prop_com
+        )
 
         # I_23
         liquid_I_23_prop_com = parallel_axis_theorem_I23(
@@ -577,14 +582,23 @@ class HybridMotor(Motor):
         grain_I_23_prop_com = parallel_axis_theorem_I23(
             Function(0), self.grain_propellant_mass, grain_dist_vec_func
         )
-        self._propellant_I_23_from_propellant_CM = liquid_I_23_prop_com + grain_I_23_prop_com
+        self._propellant_I_23_from_propellant_CM = (
+            liquid_I_23_prop_com + grain_I_23_prop_com
+        )
 
         # IMPORTANT: Call the parent __init__ AFTER calculating component inertias
         #            because the parent __init__ uses these calculated values.
         super().__init__(
             thrust_source=thrust_source,
-            dry_mass=self.dry_mass, # Use the corrected dry mass
-            dry_inertia=(self.dry_I_11, self.dry_I_22, self.dry_I_33, self.dry_I_12, self.dry_I_13, self.dry_I_23), # Use corrected dry inertia
+            dry_mass=self.dry_mass,  # Use the corrected dry mass
+            dry_inertia=(
+                self.dry_I_11,
+                self.dry_I_22,
+                self.dry_I_33,
+                self.dry_I_12,
+                self.dry_I_13,
+                self.dry_I_23,
+            ),  # Use corrected dry inertia
             nozzle_radius=nozzle_radius,
             burn_time=burn_time,
             center_of_dry_mass_position=center_of_dry_mass_position,
@@ -599,6 +613,7 @@ class HybridMotor(Motor):
 
         # Initialize plots object specific to HybridMotor
         self.plots = _HybridMotorPlots(self)
+
     def exhaust_velocity(self):
         """Exhaust velocity by assuming it as a constant. The formula used is
         total impulse/propellant initial mass.
@@ -677,144 +692,50 @@ class HybridMotor(Motor):
         return mass_balance / self.propellant_mass
 
     @funcify_method("Time (s)", "Inertia I_11 (kg m²)")
+    @property
+    @funcify_method("Time (s)", "Inertia I_11 (kg m²)")
     def propellant_I_11(self):
         """Inertia tensor 11 component of the propellant, the inertia is
         relative to the e_1 axis, centered at the instantaneous propellant
         center of mass.
-
-        Returns
-        -------
-        Function
-            Propellant inertia tensor 11 component at time t.
-
-        Notes
-        -----
-        The e_1 direction is assumed to be the direction perpendicular to the
-        motor body axis.
-
-        References
-        ----------
-        https://en.wikipedia.org/wiki/Moment_of_inertia#Inertia_tensor
         """
+        # Returns the value calculated in __init__
+        return self.propellant_I_11_from_propellant_CM
 
-        solid_mass = self.solid.propellant_mass
-        liquid_mass = self.liquid.propellant_mass
-
-        cm = self.center_of_propellant_mass
-        solid_cm_to_cm = self.solid.center_of_propellant_mass - cm
-        liquid_cm_to_cm = self.liquid.center_of_propellant_mass - cm
-
-        solid_prop_inertia = self.solid.propellant_I_11
-        liquid_prop_inertia = self.liquid.propellant_I_11
-
-        I_11 = parallel_axis_theorem_from_com(
-            solid_prop_inertia, solid_mass, solid_cm_to_cm
-        ) + parallel_axis_theorem_from_com(
-            liquid_prop_inertia, liquid_mass, liquid_cm_to_cm
-        )
-
-        return I_11
-
+    @property
     @funcify_method("Time (s)", "Inertia I_22 (kg m²)")
     def propellant_I_22(self):
-        """Inertia tensor 22 component of the propellant, the inertia is
-        relative to the e_2 axis, centered at the instantaneous propellant
-        center of mass.
+        """Inertia tensor 22 component of the propellant... (Identical to I_11)"""
 
-        Returns
-        -------
-        Function
-            Propellant inertia tensor 22 component at time t.
+        return self.propellant_I_22_from_propellant_CM
 
-        Notes
-        -----
-        The e_2 direction is assumed to be the direction perpendicular to the
-        motor body axis, and perpendicular to e_1.
-
-        References
-        ----------
-        https://en.wikipedia.org/wiki/Moment_of_inertia#Inertia_tensor
-        """
-        return self.propellant_I_11
-
+    @property
     @funcify_method("Time (s)", "Inertia I_33 (kg m²)")
     def propellant_I_33(self):
-        """Inertia tensor 33 component of the propellant, the inertia is
-        relative to the e_3 axis, centered at the instantaneous propellant
-        center of mass.
+        """Inertia tensor 33 component of the propellant..."""
 
-        Returns
-        -------
-        Function
-            Propellant inertia tensor 33 component at time t.
+        return self.propellant_I_33_from_propellant_CM
 
-        Notes
-        -----
-        The e_3 direction is assumed to be the axial direction of the rocket
-        motor.
-
-        References
-        ----------
-        https://en.wikipedia.org/wiki/Moment_of_inertia#Inertia_tensor
-        """
-        return self.solid.propellant_I_33 + self.liquid.propellant_I_33
-
+    @property
     @funcify_method("Time (s)", "Inertia I_12 (kg m²)")
     def propellant_I_12(self):
-        """Inertia tensor 12 component of the propellant, the inertia is
-        relative to the e_1 and e_2 axes, centered at the instantaneous
-        propellant center of mass.
+        """Inertia tensor 12 component of the propellant..."""
 
-        Returns
-        -------
-        Function
-            Propellant inertia tensor 12 component at time t.
+        return self._propellant_I_12_from_propellant_CM
 
-        Notes
-        -----
-            This is assumed to be zero due to axial symmetry of the motor. This
-            could be improved in the future to account for the fact that the
-            motor is not perfectly symmetric.
-        """
-        return 0
-
+    @property
     @funcify_method("Time (s)", "Inertia I_13 (kg m²)")
     def propellant_I_13(self):
-        """Inertia tensor 13 component of the propellant, the inertia is
-        relative to the e_1 and e_3 axes, centered at the instantaneous
-        propellant center of mass.
+        """Inertia tensor 13 component of the propellant..."""
 
-        Returns
-        -------
-        Function
-            Propellant inertia tensor 13 component at time t.
+        return self._propellant_I_13_from_propellant_CM
 
-        Notes
-        -----
-            This is assumed to be zero due to axial symmetry of the motor. This
-            could be improved in the future to account for the fact that the
-            motor is not perfectly symmetric.
-        """
-        return 0
-
+    @property
     @funcify_method("Time (s)", "Inertia I_23 (kg m²)")
     def propellant_I_23(self):
-        """Inertia tensor 23 component of the propellant, the inertia is
-        relative to the e_2 and e_3 axes, centered at the instantaneous
-        propellant center of mass.
+        """Inertia tensor 23 component of the propellant..."""
 
-        Returns
-        -------
-        Function
-            Propellant inertia tensor 23 component at time t.
-
-        Notes
-        -----
-            This is assumed to be zero due to axial symmetry of the motor. This
-            could be improved in the future to account for the fact that the
-            motor is not perfectly symmetric.
-        """
-        return 0
+        return self._propellant_I_23_from_propellant_CM
 
     def add_tank(self, tank, position):
         """Adds a tank to the motor.
@@ -916,11 +837,12 @@ class HybridMotor(Motor):
             grain_separation=data["grain_separation"],
             grains_center_of_mass_position=data["grains_center_of_mass_position"],
             nozzle_position=data["nozzle_position"],
-            throat_radius=data["throat_radius"],
+            tanks_mass=data["tanks_mass"],
+            oxidizer_initial_mass=data["oxidizer_initial_mass"],
+            oxidizer_mass_flow_rate_curve=data["oxidizer_mass_flow_rate_curve"],
+            oxidizer_density=data["oxidizer_density"],
+            oxidizer_tanks_geometries=data["oxidizer_tanks_geometries"],
+            oxidizer_tanks_positions=data["oxidizer_tanks_positions"],
             reference_pressure=data.get("reference_pressure"),
         )
-
-        for tank in data["positioned_tanks"]:
-            motor.add_tank(tank["tank"], tank["position"])
-
         return motor
