@@ -1,33 +1,16 @@
 from functools import cached_property
-
 import numpy as np
-
-from rocketpy.mathutils.function import Function, funcify_method, reset_funcified_methods
-from .tank import Tank
-
+from rocketpy.mathutils.function import funcify_method, reset_funcified_methods
 from ..plots.liquid_motor_plots import _LiquidMotorPlots
-from ..prints.liquid_motor_prints import _LiquidMotorPrints
 from .motor import Motor
-from ..tools import ( # Utilisez ..tools si liquid_motor.py est dans rocketpy/motors/
-    parallel_axis_theorem_I11,
-    parallel_axis_theorem_I22,
-    parallel_axis_theorem_I33,
-    parallel_axis_theorem_I12,
-    parallel_axis_theorem_I13,
-    parallel_axis_theorem_I23,
-    # Ajoutez d'autres imports de tools si nécessaire (ex: tuple_handler)
-)
-# Ajoutez également l'import de Vector s'il n'est pas déjà là
-from ..mathutils.vector_matrix import Vector
+
 
 class LiquidMotor(Motor):
     """Class to specify characteristics and useful operations for Liquid
     motors. This class inherits from the Motor class.
-
     See Also
     --------
     Motor
-
     Attributes
     ----------
     LiquidMotor.coordinate_system_orientation : str
@@ -168,8 +151,6 @@ class LiquidMotor(Motor):
     """
 
     # pylint: disable=too-many-locals, too-many-statements, too-many-arguments
-    # pylint: disable=too-many-locals, too-many-statements, too-many-arguments
-    # pylint: disable=too-many-locals, too-many-statements, too-many-arguments
     def __init__(
         self,
         thrust_source,
@@ -183,35 +164,16 @@ class LiquidMotor(Motor):
         interpolation_method="linear",
         coordinate_system_orientation="nozzle_to_combustion_chamber",
         reference_pressure=None,
-        # Les arguments spécifiques au LiquidMotor ne sont pas utilisés
-        # dans __init__ car les réservoirs sont ajoutés plus tard via add_tank
-        tanks_mass=0, # Note: cet argument est utilisé pour corriger dry_mass
-        oxidizer_tanks_geometries=None, # Non utilisé ici
-        fuel_tanks_geometries=None, # Non utilisé ici
-        oxidizer_tanks_positions=None, # Non utilisé ici
-        fuel_tanks_positions=None, # Non utilisé ici
-        oxidizer_initial_mass=0, # Non utilisé ici
-        fuel_initial_mass=0, # Non utilisé ici
-        oxidizer_mass_flow_rate_curve=0, # Non utilisé ici
-        fuel_mass_flow_rate_curve=0, # Non utilisé ici
-        oxidizer_density=None, # Non utilisé ici
-        fuel_density=None, # Non utilisé ici
-        oxidizer_tanks_initial_liquid_level=None, # Non utilisé ici
-        oxidizer_tanks_initial_ullage_mass=None, # Non utilisé ici
-        oxidizer_tanks_initial_ullage_volume=None, # Non utilisé ici
-        fuel_tanks_initial_liquid_level=None, # Non utilisé ici
-        fuel_tanks_initial_ullage_mass=None, # Non utilisé ici
-        fuel_tanks_initial_ullage_volume=None, # Non utilisé ici
+        tanks_mass=0,
     ):
 
-        # Initialise la liste des réservoirs
+        # Initialize the list of tanks
         self.positioned_tanks = []
 
-        # Corrige la masse sèche pour inclure la masse des réservoirs
+        # Correct the dry mass to include the mass of the tanks
         dry_mass = dry_mass + tanks_mass
         dry_inertia = (*dry_inertia, 0, 0, 0) if len(dry_inertia) == 3 else dry_inertia
-        
-        # Appelle l'__init__ de la classe Mère (Motor)
+
         super().__init__(
             thrust_source=thrust_source,
             dry_mass=dry_mass,
@@ -226,7 +188,6 @@ class LiquidMotor(Motor):
             reference_pressure=reference_pressure,
         )
 
-        # Initialise l'objet plots
         self.plots = _LiquidMotorPlots(self)
 
     @funcify_method("Time (s)", "Exhaust Velocity (m/s)")
@@ -336,7 +297,6 @@ class LiquidMotor(Motor):
         return mass_balance / total_mass
 
     @funcify_method("Time (s)", "Inertia I_11 (kg m²)")
-    @funcify_method("Time (s)", "Inertia I_11 (kg m²)")
     def propellant_I_11(self):
         """Inertia tensor 11 component of the total propellant, the inertia is
         relative to the e_1 axis, centered at the instantaneous total propellant
@@ -347,17 +307,9 @@ class LiquidMotor(Motor):
         Function
             Total propellant inertia tensor 11 component at time t relative to total propellant CoM.
         """
-        # --- DÉBUT CORRECTION ---
-        # Inertias calculées dans __init__ relatives au CoM total du propergol
         I_11_prop_relative_to_prop_com = self.propellant_I_11_from_propellant_CM
-
-        # Dans ce cas, l'inertie est déjà calculée par rapport au centre de masse
-        # du propergol dans __init__. Il n'y a pas besoin de réappliquer le PAT ici.
-        # Les anciennes versions appliquaient le PAT deux fois, ce qui était incorrect.
-
-        # On retourne directement la valeur calculée dans __init__
         return I_11_prop_relative_to_prop_com
-        # --- FIN CORRECTION ---
+
     @funcify_method("Time (s)", "Inertia I_22 (kg m²)")
     def propellant_I_22(self):
         """Inertia tensor 22 component of the propellant, the inertia is
