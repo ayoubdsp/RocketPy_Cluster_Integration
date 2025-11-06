@@ -14,7 +14,6 @@ import json
 import math
 import re
 import time
-import warnings
 from bisect import bisect_left
 
 import dill
@@ -27,66 +26,6 @@ from packaging import version as packaging_version
 
 # Mapping of module name and the name of the package that should be installed
 INSTALL_MAPPING = {"IPython": "ipython"}
-
-
-def deprecated(reason=None, version=None, alternative=None):
-    """
-    Decorator to mark functions or methods as deprecated.
-
-    This decorator issues a DeprecationWarning when the decorated function
-    is called, indicating that it will be removed in future versions.
-
-    Parameters
-    ----------
-    reason : str, optional
-        Custom deprecation message. If not provided, a default message will be used.
-    version : str, optional
-        Version when the function will be removed. If provided, it will be
-        included in the warning message.
-    alternative : str, optional
-        Name of the alternative function/method that should be used instead.
-        If provided, it will be included in the warning message.
-
-    Returns
-    -------
-    callable
-        The decorated function with deprecation warning functionality.
-
-    Examples
-    --------
-    >>> @deprecated(reason="This function is obsolete", version="v2.0.0",
-    ...             alternative="new_function")
-    ... def old_function():
-    ...     return "old result"
-
-    >>> @deprecated()
-    ... def another_old_function():
-    ...     return "result"
-    """
-
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            # Build the deprecation message
-            if reason:
-                message = reason
-            else:
-                message = f"The function `{func.__name__}` is deprecated"
-
-            if version:
-                message += f" and will be removed in {version}"
-
-            if alternative:
-                message += f". Use `{alternative}` instead"
-
-            message += "."
-
-            warnings.warn(message, DeprecationWarning, stacklevel=2)
-            return func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
 
 
 def tuple_handler(value):
@@ -182,13 +121,12 @@ def find_roots_cubic_function(a, b, c, d):
     Examples
     --------
     >>> from rocketpy.tools import find_roots_cubic_function
-    >>> import cmath
 
     First we define the coefficients of the function ax**3 + bx**2 + cx + d
     >>> a, b, c, d = 1, -3, -1, 3
     >>> x1, x2, x3 = find_roots_cubic_function(a, b, c, d)
-    >>> cmath.isclose(x1, (-1+0j))
-    True
+    >>> x1
+    (-1+0j)
 
     To get the real part of the roots, use the real attribute of the complex
     number.
@@ -1081,33 +1019,131 @@ def exponential_backoff(max_attempts, base_delay=1, max_delay=60):
     return decorator
 
 
-def parallel_axis_theorem_from_com(com_inertia_moment, mass, distance):
-    """Calculates the moment of inertia of a object relative to a new axis using
-    the parallel axis theorem. The new axis is parallel to and at a distance
-    'distance' from the original axis, which *must* passes through the object's
-    center of mass.
+# ######################################################################
+# DÉBUT DU BLOC CORRIGÉ - THÉORÈME DES AXES PARALLÈLES (PAT)
+# ######################################################################
 
-    Parameters
-    ----------
-    com_inertia_moment : float
-        Moment of inertia relative to the center of mass of the object.
-    mass : float
-        Mass of the object.
-    distance : float
-        Perpendicular distance between the original and new axis.
-
-    Returns
-    -------
-    float
-        Moment of inertia relative to the new axis.
-
-    References
-    ----------
-    https://en.wikipedia.org/wiki/Parallel_axis_theorem
+def _pat_dynamic_helper(com_inertia_moment, mass, distance_vec_3d, axes_term_lambda):
     """
-    return com_inertia_moment + mass * distance**2
+    Helper interne pour gérer la logique dynamique/statique du PAT pour
+    les termes diagonaux (I11, I22, I33).
+    """
+    # Importer localement pour éviter les dépendances circulaires
+    from rocketpy.mathutils.function import Function
+    from rocketpy.mathutils.vector_matrix import Vector
 
+    is_dynamic = (
+        isinstance(com_inertia_moment, Function) or
+        isinstance(mass, Function) or
+        isinstance(distance_vec_3d, Function)
+    )
 
+    def get_val(arg, t):
+        """Obtient la valeur de l'argument à l'instant t."""
+        return arg(t) if isinstance(arg, Function) else arg
+
+    if not is_dynamic:
+        # Cas statique
+        d_vec = Vector(distance_vec_3d)
+        mass_term = mass * axes_term_lambda(d_vec)
+        return com_inertia_moment + mass_term
+    else:
+        # Cas dynamique : retourne une nouvelle Fonction
+        def new_source(t):
+            d_vec_t = get_val(distance_vec_3d, t)
+            mass_t = get_val(mass, t)
+            inertia_t = get_val(com_inertia_moment, t)
+            
+            mass_term = mass_t * axes_term_lambda(d_vec_t)
+            return inertia_t + mass_term
+
+        return Function(new_source, inputs="t", outputs="Inertia (kg*m^2)")
+
+def _pat_dynamic_product_helper(com_inertia_product, mass, distance_vec_3d, product_term_lambda):
+    """
+    Helper interne pour gérer la logique dynamique/statique du PAT pour
+    les produits d'inertie (I12, I13, I23).
+    """
+    # Importer localement pour éviter les dépendances circulaires
+    from rocketpy.mathutils.function import Function
+    from rocketpy.mathutils.vector_matrix import Vector
+
+    is_dynamic = (
+        isinstance(com_inertia_product, Function) or
+        isinstance(mass, Function) or
+        isinstance(distance_vec_3d, Function)
+    )
+
+    def get_val(arg, t):
+        """Obtient la valeur de l'argument à l'instant t."""
+        return arg(t) if isinstance(arg, Function) else arg
+
+    if not is_dynamic:
+        # Cas statique
+        d_vec = Vector(distance_vec_3d)
+        mass_term = mass * product_term_lambda(d_vec)
+        return com_inertia_product + mass_term
+    else:
+        # Cas dynamique : retourne une nouvelle Fonction
+        def new_source(t):
+            d_vec_t = get_val(distance_vec_3d, t)
+            mass_t = get_val(mass, t)
+            inertia_t = get_val(com_inertia_product, t)
+            
+            mass_term = mass_t * product_term_lambda(d_vec_t)
+            return inertia_t + mass_term
+        
+        return Function(new_source, inputs="t", outputs="Inertia (kg*m^2)")
+
+# --- Fonctions Publiques pour le Théorème des Axes Parallèles ---
+
+def parallel_axis_theorem_I11(com_inertia_moment, mass, distance_vec_3d):
+    """
+    Calcule l'inertie I_11 (tangage) relative à un nouvel axe en utilisant le PAT.
+    Formule : I_11 = I_cm_11 + m * (d_y^2 + d_z^2)
+    """
+    return _pat_dynamic_helper(com_inertia_moment, mass, distance_vec_3d, 
+                               lambda d_vec: d_vec.y**2 + d_vec.z**2)
+
+def parallel_axis_theorem_I22(com_inertia_moment, mass, distance_vec_3d):
+    """
+    Calcule l'inertie I_22 (lacet) relative à un nouvel axe en utilisant le PAT.
+    Formule : I_22 = I_cm_22 + m * (d_x^2 + d_z^2)
+    """
+    return _pat_dynamic_helper(com_inertia_moment, mass, distance_vec_3d, 
+                               lambda d_vec: d_vec.x**2 + d_vec.z**2)
+
+def parallel_axis_theorem_I33(com_inertia_moment, mass, distance_vec_3d):
+    """
+    Calcule l'inertie I_33 (roulis) relative à un nouvel axe en utilisant le PAT.
+    Formule : I_33 = I_cm_33 + m * (d_x^2 + d_y^2)
+    """
+    return _pat_dynamic_helper(com_inertia_moment, mass, distance_vec_3d, 
+                               lambda d_vec: d_vec.x**2 + d_vec.y**2)
+
+def parallel_axis_theorem_I12(com_inertia_product, mass, distance_vec_3d):
+    """
+    Calcule le produit d'inertie I_12 relatif à un nouvel axe en utilisant le PAT.
+    Formule : I_12 = I_cm_12 + m * d_x * d_y
+    """
+    return _pat_dynamic_product_helper(com_inertia_product, mass, distance_vec_3d, 
+                                       lambda d_vec: d_vec.x * d_vec.y)
+
+def parallel_axis_theorem_I13(com_inertia_product, mass, distance_vec_3d):
+    """
+    Calcule le produit d'inertie I_13 relatif à un nouvel axe en utilisant le PAT.
+    Formule : I_13 = I_cm_13 + m * d_x * d_z
+    """
+    return _pat_dynamic_product_helper(com_inertia_product, mass, distance_vec_3d, 
+                                       lambda d_vec: d_vec.x * d_vec.z)
+
+def parallel_axis_theorem_I23(com_inertia_product, mass, distance_vec_3d):
+    """
+    Calcule le produit d'inertie I_23 relatif à un nouvel axe en utilisant le PAT.
+    Formule : I_23 = I_cm_23 + m * d_y * d_z
+    """
+    return _pat_dynamic_product_helper(com_inertia_product, mass, distance_vec_3d, 
+                                       lambda d_vec: d_vec.y * d_vec.z)
 # Flight
 def quaternions_to_precession(e0, e1, e2, e3):
     """Calculates the Precession angle
@@ -1294,43 +1330,6 @@ def from_hex_decode(obj_bytes, decoder=base64.b85decode):
         Object converted from bytes.
     """
     return dill.loads(decoder(bytes.fromhex(obj_bytes)))
-
-
-def find_obj_from_hash(obj, hash_, depth_limit=None):
-    """Searches the object (and its children) for
-    an object whose '__rpy_hash' field has a particular hash value.
-
-    Parameters
-    ----------
-    obj : object
-        Object to search.
-    hash_ : int
-        Hash value to search for in the '__rpy_hash' field.
-    depth_limit : int, optional
-        Maximum depth to search recursively. If None, no limit.
-
-    Returns
-    -------
-    object
-        The object whose '__rpy_hash' matches hash_, or None if not found.
-    """
-
-    stack = [(obj, 0)]
-    while stack:
-        current_obj, current_depth = stack.pop()
-        if depth_limit is not None and current_depth > depth_limit:
-            continue
-
-        if getattr(current_obj, "__rpy_hash", None) == hash_:
-            return current_obj
-
-        if isinstance(current_obj, dict):
-            stack.extend((v, current_depth + 1) for v in current_obj.values())
-
-        elif isinstance(current_obj, (list, tuple, set)):
-            stack.extend((item, current_depth + 1) for item in current_obj)
-
-    return None
 
 
 if __name__ == "__main__":  # pragma: no cover
