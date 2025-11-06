@@ -1,13 +1,13 @@
 # pylint: disable=too-many-lines
+import json
 import math
 import warnings
 from copy import deepcopy
 from functools import cached_property
 
 import numpy as np
+import simplekml
 from scipy.integrate import BDF, DOP853, LSODA, RK23, RK45, OdeSolver, Radau
-
-from rocketpy.simulation.flight_data_exporter import FlightDataExporter
 
 from ..mathutils.function import Function, funcify_method
 from ..mathutils.vector_matrix import Matrix, Vector
@@ -15,7 +15,6 @@ from ..plots.flight_plots import _FlightPlots
 from ..prints.flight_prints import _FlightPrints
 from ..tools import (
     calculate_cubic_hermite_coefficients,
-    deprecated,
     euler313_to_quaternions,
     find_closest,
     find_root_linear_interpolation,
@@ -144,7 +143,7 @@ class Flight:
     Flight.heading : int, float
         Launch heading angle relative to north given in degrees.
     Flight.initial_solution : list
-        List defines initial condition - [t_initial, x_init,
+        List defines initial condition - [tInit, x_init,
         y_init, z_init, vx_init, vy_init, vz_init, e0_init, e1_init,
         e2_init, e3_init, w1_init, w2_init, w3_init]
     Flight.t_initial : int, float
@@ -156,6 +155,12 @@ class Flight:
         Current integration time.
     Flight.y : list
         Current integration state vector u.
+    Flight.post_processed : bool
+        Defines if solution data has been post processed.
+    Flight.initial_solution : list
+        List defines initial condition - [tInit, x_init,
+        y_init, z_init, vx_init, vy_init, vz_init, e0_init, e1_init,
+        e2_init, e3_init, w1_init, w2_init, w3_init]
     Flight.out_of_rail_time : int, float
         Time, in seconds, in which the rocket completely leaves the
         rail.
@@ -541,7 +546,7 @@ class Flight:
         rtol : float, array, optional
             Maximum relative error tolerance to be tolerated in the
             integration scheme. Can be given as array for each
-            state space variable. Default is 1e-6.
+            state space variable. Default is 1e-3.
         atol : float, optional
             Maximum absolute error tolerance to be tolerated in the
             integration scheme. Can be given as array for each
@@ -762,22 +767,7 @@ class Flight:
                         callbacks = [
                             lambda self, parachute_cd_s=parachute.cd_s: setattr(
                                 self, "parachute_cd_s", parachute_cd_s
-                            ),
-                            lambda self, parachute_radius=parachute.radius: setattr(
-                                self, "parachute_radius", parachute_radius
-                            ),
-                            lambda self, parachute_height=parachute.height: setattr(
-                                self, "parachute_height", parachute_height
-                            ),
-                            lambda self, parachute_porosity=parachute.porosity: setattr(
-                                self, "parachute_porosity", parachute_porosity
-                            ),
-                            lambda self,
-                            added_mass_coefficient=parachute.added_mass_coefficient: setattr(
-                                self,
-                                "parachute_added_mass_coefficient",
-                                added_mass_coefficient,
-                            ),
+                            )
                         ]
                         self.flight_phases.add_phase(
                             node.t + parachute.lag,
@@ -1023,31 +1013,7 @@ class Flight:
                                             lambda self,
                                             parachute_cd_s=parachute.cd_s: setattr(
                                                 self, "parachute_cd_s", parachute_cd_s
-                                            ),
-                                            lambda self,
-                                            parachute_radius=parachute.radius: setattr(
-                                                self,
-                                                "parachute_radius",
-                                                parachute_radius,
-                                            ),
-                                            lambda self,
-                                            parachute_height=parachute.height: setattr(
-                                                self,
-                                                "parachute_height",
-                                                parachute_height,
-                                            ),
-                                            lambda self,
-                                            parachute_porosity=parachute.porosity: setattr(
-                                                self,
-                                                "parachute_porosity",
-                                                parachute_porosity,
-                                            ),
-                                            lambda self,
-                                            added_mass_coefficient=parachute.added_mass_coefficient: setattr(
-                                                self,
-                                                "parachute_added_mass_coefficient",
-                                                added_mass_coefficient,
-                                            ),
+                                            )
                                         ]
                                         self.flight_phases.add_phase(
                                             overshootable_node.t + parachute.lag,
@@ -1130,13 +1096,13 @@ class Flight:
         self.out_of_rail_time_index = 0
         self.out_of_rail_state = np.array([0])
         self.apogee_state = np.array([0])
-        self.apogee = 0
         self.apogee_time = 0
         self.x_impact = 0
         self.y_impact = 0
         self.impact_velocity = 0
         self.impact_state = np.array([0])
         self.parachute_events = []
+        self.post_processed = False
         self.__post_processed_variables = []
 
     def __init_flight_state(self):
@@ -1205,7 +1171,6 @@ class Flight:
             self.out_of_rail_state = self.initial_solution[1:]
             self.out_of_rail_time = self.initial_solution[0]
             self.out_of_rail_time_index = 0
-            self.t_initial = self.initial_solution[0]
             self.initial_derivative = self.u_dot_generalized
         if self._controllers or self.sensors:
             # Handle post process during simulation, get initial accel/forces
@@ -1714,12 +1679,6 @@ class Flight:
         ax, ay, az = K @ Vector(L)
         az -= self.env.gravity.get_value_opt(z)  # Include gravity
 
-        # Coriolis acceleration
-        _, w_earth_y, w_earth_z = self.env.earth_rotation_vector
-        ax -= 2 * (vz * w_earth_y - vy * w_earth_z)
-        ay -= 2 * (vx * w_earth_z)
-        az -= 2 * (-vx * w_earth_y)
-
         # Create u_dot
         u_dot = [
             vx,
@@ -1759,141 +1718,100 @@ class Flight:
 
         return u_dot
 
-    def u_dot_generalized(self, t, u, post_processing=False):  # pylint: disable=too-many-locals,too-many-statements
-        """Calculates derivative of u state vector with respect to time when the
-        rocket is flying in 6 DOF motion in space and significant mass variation
-        effects exist. Typical flight phases include powered ascent after launch
-        rail.
+# Dans flight.py, dans la classe Flight
 
-        Parameters
-        ----------
-        t : float
-            Time in seconds
-        u : list
-            State vector defined by u = [x, y, z, vx, vy, vz, q0, q1,
-            q2, q3, omega1, omega2, omega3].
-        post_processing : bool, optional
-            If True, adds flight data information directly to self variables
-            such as self.angle_of_attack, by default False.
-
-        Returns
-        -------
-        u_dot : list
-            State vector defined by u_dot = [vx, vy, vz, ax, ay, az,
-            e0_dot, e1_dot, e2_dot, e3_dot, alpha1, alpha2, alpha3].
+    def u_dot_generalized(self, t, u, post_processing=False):
         """
-        # Retrieve integration data
-        _, _, z, vx, vy, vz, e0, e1, e2, e3, omega1, omega2, omega3 = u
+        Calcule la dérivée du vecteur d'état u (6-DOF) en utilisant un formalisme généralisé
+        adapté pour les clusters moteurs et incluant toutes les forces physiques.
+        """
+        # Extraction des variables d'état
+        x, y, z, vx, vy, vz, e0, e1, e2, e3, w1, w2, w3 = u
 
-        # Create necessary vectors
-        # r = Vector([x, y, z])  # CDM position vector
-        v = Vector([vx, vy, vz])  # CDM velocity vector
-        e = [e0, e1, e2, e3]  # Euler parameters/quaternions
-        w = Vector([omega1, omega2, omega3])  # Angular velocity vector
+        # Création des vecteurs pour les calculs
+        velocity_vector = Vector([vx, vy, vz])
+        euler_params = [e0, e1, e2, e3]
+        angular_velocity_vector = Vector([w1, w2, w3])
+        w = angular_velocity_vector
 
-        # Retrieve necessary quantities
-        ## Rocket mass
+        # Propriétés de la fusée à l'instant t
         total_mass = self.rocket.total_mass.get_value_opt(t)
-        total_mass_dot = self.rocket.total_mass_flow_rate.get_value_opt(t)
-        total_mass_ddot = self.rocket.total_mass_flow_rate.differentiate_complex_step(t)
-        ## CM position vector and time derivatives relative to CDM in body frame
-        r_CM_z = self.rocket.com_to_cdm_function
-        r_CM_t = r_CM_z.get_value_opt(t)
-        r_CM = Vector([0, 0, r_CM_t])
-        r_CM_dot = Vector([0, 0, r_CM_z.differentiate_complex_step(t)])
-        r_CM_ddot = Vector([0, 0, r_CM_z.differentiate(t, order=2)])
-        ## Nozzle position vector
-        r_NOZ = Vector([0, 0, self.rocket.nozzle_to_cdm])
-        ## Nozzle gyration tensor
-        S_nozzle = self.rocket.nozzle_gyration_tensor
-        ## Inertia tensor
-        inertia_tensor = self.rocket.get_inertia_tensor_at_time(t)
-        ## Inertia tensor time derivative in the body frame
-        I_dot = self.rocket.get_inertia_tensor_derivative_at_time(t)
-
-        # Calculate the Inertia tensor relative to CM
-        H = (r_CM.cross_matrix @ -r_CM.cross_matrix) * total_mass
-        I_CM = inertia_tensor - H
-
-        # Prepare transformation matrices
-        K = Matrix.transformation(e)
+        
+        # Matrice de transformation du repère corps au repère inertiel
+        K = Matrix.transformation(euler_params)
         Kt = K.transpose
 
-        # Compute aerodynamic forces and moments
-        R1, R2, R3, M1, M2, M3 = 0, 0, 0, 0, 0, 0
+        # --- Calcul des forces et moments ---
+        
+        # Gravité dans le repère corps
+        gravity_force_inertial = Vector([0, 0, -total_mass * self.env.gravity.get_value_opt(z)])
+        gravity_force_body = Kt @ gravity_force_inertial
 
-        ## Drag force
-        rho = self.env.density.get_value_opt(z)
+        # --- DÉBUT DU BLOC DE CALCUL AÉRODYNAMIQUE INTÉGRÉ ---
+        R1, R2, R3, M1, M2, M3 = 0, 0, 0, 0, 0, 0
+        
+        # Get freestream speed
         wind_velocity_x = self.env.wind_velocity_x.get_value_opt(z)
         wind_velocity_y = self.env.wind_velocity_y.get_value_opt(z)
-        wind_velocity = Vector([wind_velocity_x, wind_velocity_y, 0])
-        free_stream_speed = abs((wind_velocity - Vector(v)))
         speed_of_sound = self.env.speed_of_sound.get_value_opt(z)
-        free_stream_mach = free_stream_speed / speed_of_sound
+        rho = self.env.density.get_value_opt(z)
 
-        if self.rocket.motor.burn_start_time < t < self.rocket.motor.burn_out_time:
-            pressure = self.env.pressure.get_value_opt(z)
-            net_thrust = max(
-                self.rocket.motor.thrust.get_value_opt(t)
-                + self.rocket.motor.pressure_thrust(pressure),
-                0,
-            )
+        # Vitesse relative au vent dans le repère inertiel
+        stream_velocity_inertial = Vector([wind_velocity_x - vx, wind_velocity_y - vy, -vz])
+        free_stream_speed = abs(stream_velocity_inertial)
+        free_stream_mach = free_stream_speed / speed_of_sound
+        
+        # Déterminer la traînée de base de la fusée
+        if t < self.rocket.motor.burn_out_time:
             drag_coeff = self.rocket.power_on_drag.get_value_opt(free_stream_mach)
         else:
-            net_thrust = 0
             drag_coeff = self.rocket.power_off_drag.get_value_opt(free_stream_mach)
-        R3 += -0.5 * rho * (free_stream_speed**2) * self.rocket.area * drag_coeff
+        
+        R3_base_drag = -0.5 * rho * (free_stream_speed**2) * self.rocket.area * drag_coeff
+        R3 += R3_base_drag
+
+        # Ajouter la traînée des aérofreins si actifs
         for air_brakes in self.rocket.air_brakes:
             if air_brakes.deployment_level > 0:
-                air_brakes_cd = air_brakes.drag_coefficient.get_value_opt(
-                    air_brakes.deployment_level, free_stream_mach
-                )
-                air_brakes_force = (
-                    -0.5
-                    * rho
-                    * (free_stream_speed**2)
-                    * air_brakes.reference_area
-                    * air_brakes_cd
-                )
+                air_brakes_cd = air_brakes.drag_coefficient.get_value_opt(air_brakes.deployment_level, free_stream_mach)
+                air_brakes_force = -0.5 * rho * (free_stream_speed**2) * air_brakes.reference_area * air_brakes_cd
                 if air_brakes.override_rocket_drag:
-                    R3 = air_brakes_force  # Substitutes rocket drag coefficient
+                    R3 = air_brakes_force
                 else:
                     R3 += air_brakes_force
-        # Get rocket velocity in body frame
-        velocity_in_body_frame = Kt @ v
-        # Calculate lift and moment for each component of the rocket
-        for aero_surface, _ in self.rocket.aerodynamic_surfaces:
-            # Component cp relative to CDM in body frame
+        
+        # Moment dû à l'excentricité du CdP
+        M1 += self.rocket.cp_eccentricity_y * R3
+        M2 -= self.rocket.cp_eccentricity_x * R3
+
+        # Vitesse de la fusée dans le repère corps
+        velocity_body_frame = Kt @ velocity_vector
+        
+        # Calculer la portance et le moment pour chaque surface aérodynamique
+        for aero_surface, position in self.rocket.aerodynamic_surfaces:
             comp_cp = self.rocket.surfaces_cp_to_cdm[aero_surface]
-            # Component absolute velocity in body frame
-            comp_vb = velocity_in_body_frame + (w ^ comp_cp)
-            # Wind velocity at component altitude
+            # Vitesse absolue du composant dans le repère corps
+            comp_vb = velocity_body_frame + (w ^ comp_cp)
+            # Vitesse du vent à l'altitude du composant
             comp_z = z + (K @ comp_cp).z
             comp_wind_vx = self.env.wind_velocity_x.get_value_opt(comp_z)
             comp_wind_vy = self.env.wind_velocity_y.get_value_opt(comp_z)
-            # Component freestream velocity in body frame
+            # Vitesse du vent dans le repère corps
             comp_wind_vb = Kt @ Vector([comp_wind_vx, comp_wind_vy, 0])
             comp_stream_velocity = comp_wind_vb - comp_vb
             comp_stream_speed = abs(comp_stream_velocity)
             comp_stream_mach = comp_stream_speed / speed_of_sound
-            # Reynolds at component altitude
-            # TODO: Reynolds is only used in generic surfaces. This calculation
-            # should be moved to the surface class for efficiency
+            
             comp_reynolds = (
                 self.env.density.get_value_opt(comp_z)
                 * comp_stream_speed
                 * aero_surface.reference_length
                 / self.env.dynamic_viscosity.get_value_opt(comp_z)
             )
-            # Forces and moments
+
+            # Calcul des forces et moments pour la surface
             X, Y, Z, M, N, L = aero_surface.compute_forces_and_moments(
-                comp_stream_velocity,
-                comp_stream_speed,
-                comp_stream_mach,
-                rho,
-                comp_cp,
-                w,
-                comp_reynolds,
+                comp_stream_velocity, comp_stream_speed, comp_stream_mach, rho, comp_cp, w, comp_reynolds
             )
             R1 += X
             R2 += Y
@@ -1901,74 +1819,72 @@ class Flight:
             M1 += M
             M2 += N
             M3 += L
-
-        # Off center moment
-        M1 += (
-            self.rocket.cp_eccentricity_y * R3
-            + self.rocket.thrust_eccentricity_y * net_thrust
-        )
-        M2 -= (
-            self.rocket.cp_eccentricity_x * R3
-            + self.rocket.thrust_eccentricity_x * net_thrust
-        )
+            
+        # Moment dû à l'excentricité du CdP
         M3 += self.rocket.cp_eccentricity_x * R2 - self.rocket.cp_eccentricity_y * R1
+        
+        # Création des vecteurs finaux pour les forces et moments aéro
+        R_aero_body = Vector([R1, R2, R3])
+        M_aero_body = Vector([M1, M2, M3])
+        # --- FIN DU BLOC DE CALCUL AÉRODYNAMIQUE ---
 
-        weight_in_body_frame = Kt @ Vector(
-            [0, 0, -total_mass * self.env.gravity.get_value_opt(z)]
-        )
+        # Poussée et moment du cluster/moteur
+        if hasattr(self.rocket.motor, 'get_total_thrust_vector'): # C'est un ClusterMotor
+            thrust_vector_body = self.rocket.motor.get_total_thrust_vector(t)
+            rocket_cm = self.rocket.center_of_mass.get_value_opt(t)
+            moment_vector_body = self.rocket.motor.get_total_moment(t, rocket_cm)
+            net_thrust_scalar = abs(thrust_vector_body)
+        else: # C'est un moteur standard
+            pressure = self.env.pressure.get_value_opt(z)
+            net_thrust_scalar = max(self.rocket.motor.thrust.get_value_opt(t) + self.rocket.motor.pressure_thrust(pressure), 0)
+            thrust_vector_body = Vector([0, 0, net_thrust_scalar]) # Poussée axiale
+            moment_vector_body = Vector([ # Moment dû à l'excentricité
+                self.rocket.thrust_eccentricity_y * net_thrust_scalar,
+                -self.rocket.thrust_eccentricity_x * net_thrust_scalar,
+                0
+            ])
 
-        T00 = total_mass * r_CM
-        T03 = 2 * total_mass_dot * (r_NOZ - r_CM) - 2 * total_mass * r_CM_dot
-        T04 = (
-            Vector([0, 0, net_thrust])
-            - total_mass * r_CM_ddot
-            - 2 * total_mass_dot * r_CM_dot
-            + total_mass_ddot * (r_NOZ - r_CM)
-        )
-        T05 = total_mass_dot * S_nozzle - I_dot
+        # Force et moment totaux dans le repère corps
+        total_force_body = gravity_force_body + thrust_vector_body + R_aero_body
+        total_moment_body = moment_vector_body + M_aero_body
 
-        T20 = (
-            ((w ^ T00) ^ w)
-            + (w ^ T03)
-            + T04
-            + weight_in_body_frame
-            + Vector([R1, R2, R3])
-        )
+        # --- Équations du mouvement ---
 
-        T21 = (
-            ((inertia_tensor @ w) ^ w)
-            + T05 @ w
-            - (weight_in_body_frame ^ r_CM)
-            + Vector([M1, M2, M3])
-        )
+        # Accélération linéaire
+        linear_acceleration_body = total_force_body / total_mass
+        linear_acceleration_inertial = K @ linear_acceleration_body
+        
+        # Accélération angulaire (Équation d'Euler pour corps rigide à masse variable)
+        inertia_tensor = self.rocket.get_inertia_tensor_at_time(t)
+        I_w = inertia_tensor @ angular_velocity_vector
+        w_cross_Iw = angular_velocity_vector.cross(I_w)
+        I_dot = self.rocket.get_inertia_tensor_derivative_at_time(t)
+        
+        angular_acceleration_body = inertia_tensor.inverse @ (total_moment_body - w_cross_Iw - (I_dot @ angular_velocity_vector))
+        
+        # Dérivées des paramètres d'Euler
+        e0dot = 0.5 * (-w1*e1 - w2*e2 - w3*e3)
+        e1dot = 0.5 * ( w1*e0 + w3*e2 - w2*e3)
+        e2dot = 0.5 * ( w2*e0 - w3*e1 + w1*e3)
+        e3dot = 0.5 * ( w3*e0 + w2*e1 - w1*e2)
 
-        # Angular velocity derivative
-        w_dot = I_CM.inverse @ (T21 + (T20 ^ r_CM))
-
-        # Euler parameters derivative
-        e_dot = [
-            0.5 * (-omega1 * e1 - omega2 * e2 - omega3 * e3),
-            0.5 * (omega1 * e0 + omega3 * e2 - omega2 * e3),
-            0.5 * (omega2 * e0 - omega3 * e1 + omega1 * e3),
-            0.5 * (omega3 * e0 + omega2 * e1 - omega1 * e2),
+        # Assemblage du vecteur dérivé
+        u_dot = [
+            vx, vy, vz,
+            *linear_acceleration_inertial,
+            e0dot, e1dot, e2dot, e3dot,
+            *angular_acceleration_body
         ]
-
-        # Velocity vector derivative + Coriolis acceleration
-        w_earth = Vector(self.env.earth_rotation_vector)
-        v_dot = K @ (T20 / total_mass - (r_CM ^ w_dot)) - 2 * (w_earth ^ v)
-
-        # Position vector derivative
-        r_dot = [vx, vy, vz]
-
-        # Create u_dot
-        u_dot = [*r_dot, *v_dot, *e_dot, *w_dot]
-
+        
+        # Post-processing (si nécessaire)
         if post_processing:
-            self.__post_processed_variables.append(
-                [t, *v_dot, *w_dot, R1, R2, R3, M1, M2, M3, net_thrust]
-            )
-
+            self.__post_processed_variables.append([
+                t, *linear_acceleration_inertial, *angular_acceleration_body,
+                *R_aero_body, *total_moment_body, net_thrust_scalar
+            ])
+            
         return u_dot
+
 
     def u_dot_parachute(self, t, u, post_processing=False):
         """Calculates derivative of u state vector with respect to time
@@ -2001,9 +1917,15 @@ class Flight:
         wind_velocity_x = self.env.wind_velocity_x.get_value_opt(z)
         wind_velocity_y = self.env.wind_velocity_y.get_value_opt(z)
 
+        # Get Parachute data
+        cd_s = self.parachute_cd_s
+
         # Get the mass of the rocket
         mp = self.rocket.dry_mass
 
+        # Define constants
+        ka = 1  # Added mass coefficient (depends on parachute's porosity)
+        R = 1.5  # Parachute radius
         # to = 1.2
         # eta = 1
         # Rdot = (6 * R * (1 - eta) / (1.2**6)) * (
@@ -2011,17 +1933,8 @@ class Flight:
         # )
         # Rdot = 0
 
-        # tf = 8 * nominal diameter / velocity at line stretch
-
         # Calculate added mass
-        ma = (
-            self.parachute_added_mass_coefficient
-            * rho
-            * (2 / 3)
-            * np.pi
-            * self.parachute_radius**2
-            * self.parachute_height
-        )
+        ma = ka * rho * (4 / 3) * np.pi * R**3
 
         # Calculate freestream speed
         freestream_x = vx - wind_velocity_x
@@ -2030,20 +1943,14 @@ class Flight:
         free_stream_speed = (freestream_x**2 + freestream_y**2 + freestream_z**2) ** 0.5
 
         # Determine drag force
-        pseudo_drag = -0.5 * rho * self.parachute_cd_s * free_stream_speed
+        pseudo_drag = -0.5 * rho * cd_s * free_stream_speed
         # pseudo_drag = pseudo_drag - ka * rho * 4 * np.pi * (R**2) * Rdot
-        Dx = pseudo_drag * freestream_x  # add eta efficiency for wake
+        Dx = pseudo_drag * freestream_x
         Dy = pseudo_drag * freestream_y
         Dz = pseudo_drag * freestream_z
         ax = Dx / (mp + ma)
         ay = Dy / (mp + ma)
-        az = (Dz - mp * self.env.gravity.get_value_opt(z)) / (mp + ma)
-
-        # Add coriolis acceleration
-        _, w_earth_y, w_earth_z = self.env.earth_rotation_vector
-        ax -= 2 * (vz * w_earth_y - vy * w_earth_z)
-        ay -= 2 * (vx * w_earth_z)
-        az -= 2 * (-vx * w_earth_y)
+        az = (Dz - 9.8 * mp) / (mp + ma)
 
         if post_processing:
             self.__post_processed_variables.append(
@@ -2121,7 +2028,7 @@ class Flight:
 
     @funcify_method("Time (s)", "Y (m)", "spline", "constant")
     def y(self):
-        """Rocket y position relative to the launch pad as a Function of
+        """Rocket y position relative to the lauch pad as a Function of
         time."""
         return self.solution_array[:, [0, 2]]
 
@@ -3017,7 +2924,7 @@ class Flight:
         "Time (s)", "Horizontal Distance to Launch Point (m)", "spline", "constant"
     )
     def drift(self):
-        """Rocket horizontal distance to the launch point, in meters, as a
+        """Rocket horizontal distance to tha launch point, in meters, as a
         Function of time."""
         return np.column_stack(
             (self.time, (self.x[:, 1] ** 2 + self.y[:, 1] ** 2) ** 0.5)
@@ -3106,16 +3013,14 @@ class Flight:
         null_force = Function(0)
         if self.out_of_rail_time_index == 0:  # No rail phase, no rail button forces
             warnings.warn(
-                "Trying to calculate rail button forces without a rail phase defined. "
-                + "The rail button forces will be set to zero.",
-                UserWarning,
+                "Trying to calculate rail button forces without a rail phase defined."
+                + "The rail button forces will be set to zero."
             )
             return null_force, null_force, null_force, null_force
         if len(self.rocket.rail_buttons) == 0:
             warnings.warn(
-                "Trying to calculate rail button forces without rail buttons defined. "
-                + "The rail button forces will be set to zero.",
-                UserWarning,
+                "Trying to calculate rail button forces without rail buttons defined."
+                + "The rail button forces will be set to zero."
             )
             return null_force, null_force, null_force, null_force
 
@@ -3227,6 +3132,28 @@ class Flight:
 
         return np.array(self.__post_processed_variables)
 
+    def post_process(self, interpolation="spline", extrapolation="natural"):
+        """This method is **deprecated** and is only kept here for backwards
+        compatibility. All attributes that need to be post processed are
+        computed just in time.
+
+        Post-process all Flight information produced during
+        simulation. Includes the calculation of maximum values,
+        calculation of secondary values such as energy and conversion
+        of lists to Function objects to facilitate plotting.
+
+        Returns
+        -------
+        None
+        """
+        # pylint: disable=unused-argument
+        warnings.warn(
+            "The method post_process is deprecated and will be removed in v1.10. "
+            "All attributes that need to be post processed are computed just in time.",
+            DeprecationWarning,
+        )
+        self.post_processed = True
+
     def calculate_stall_wind_velocity(self, stall_angle):  # TODO: move to utilities
         """Function to calculate the maximum wind velocity before the angle of
         attack exceeds a desired angle, at the instant of departing rail launch.
@@ -3266,53 +3193,191 @@ class Flight:
             + f" of attack exceeds {stall_angle:.3f}°: {w_v:.3f} m/s"
         )
 
-    @deprecated(
-        reason="Moved to FlightDataExporter.export_pressures()",
-        version="v1.12.0",
-        alternative="rocketpy.simulation.flight_data_exporter.FlightDataExporter.export_pressures",
-    )
-    def export_pressures(self, file_name, time_step):
-        """
-        .. deprecated:: 1.11
-           Use :class:`rocketpy.simulation.flight_data_exporter.FlightDataExporter`
-           and call ``.export_pressures(...)``.
-        """
-        return FlightDataExporter(self).export_pressures(file_name, time_step)
+    def export_pressures(self, file_name, time_step):  # TODO: move out
+        """Exports the pressure experienced by the rocket during the flight to
+        an external file, the '.csv' format is recommended, as the columns will
+        be separated by commas. It can handle flights with or without
+        parachutes, although it is not possible to get a noisy pressure signal
+        if no parachute is added.
 
-    @deprecated(
-        reason="Moved to FlightDataExporter.export_data()",
-        version="v1.12.0",
-        alternative="rocketpy.simulation.flight_data_exporter.FlightDataExporter.export_data",
-    )
+        If a parachute is added, the file will contain 3 columns: time in
+        seconds, clean pressure in Pascals and noisy pressure in Pascals.
+        For flights without parachutes, the third column will be discarded
+
+        This function was created especially for the 'Projeto Jupiter'
+        Electronics Subsystems team and aims to help in configuring
+        micro-controllers.
+
+        Parameters
+        ----------
+        file_name : string
+            The final file name,
+        time_step : float
+            Time step desired for the final file
+
+        Return
+        ------
+        None
+        """
+        time_points = np.arange(0, self.t_final, time_step)
+        # pylint: disable=W1514, E1121
+        with open(file_name, "w") as file:
+            if len(self.rocket.parachutes) == 0:
+                print("No parachutes in the rocket, saving static pressure.")
+                for t in time_points:
+                    file.write(f"{t:f}, {self.pressure.get_value_opt(t):.5f}\n")
+            else:
+                for parachute in self.rocket.parachutes:
+                    for t in time_points:
+                        p_cl = parachute.clean_pressure_signal_function.get_value_opt(t)
+                        p_ns = parachute.noisy_pressure_signal_function.get_value_opt(t)
+                        file.write(f"{t:f}, {p_cl:.5f}, {p_ns:.5f}\n")
+                    # We need to save only 1 parachute data
+                    break
+
     def export_data(self, file_name, *variables, time_step=None):
+        """Exports flight data to a comma separated value file (.csv).
+
+        Data is exported in columns, with the first column representing time
+        steps. The first line of the file is a header line, specifying the
+        meaning of each column and its units.
+
+        Parameters
+        ----------
+        file_name : string
+            The file name or path of the exported file. Example: flight_data.csv
+            Do not use forbidden characters, such as / in Linux/Unix and
+            `<, >, :, ", /, \\, | ?, *` in Windows.
+        variables : strings, optional
+            Names of the data variables which shall be exported. Must be Flight
+            class attributes which are instances of the Function class. Usage
+            example: test_flight.export_data('test.csv', 'z', 'angle_of_attack',
+            'mach_number').
+        time_step : float, optional
+            Time step desired for the data. If None, all integration time steps
+            will be exported. Otherwise, linear interpolation is carried out to
+            calculate values at the desired time steps. Example: 0.001.
         """
-        .. deprecated:: 1.11
-           Use :class:`rocketpy.simulation.flight_data_exporter.FlightDataExporter`
-           and call ``.export_data(...)``.
-        """
-        return FlightDataExporter(self).export_data(
-            file_name, *variables, time_step=time_step
+        # TODO: we should move this method to outside of class.
+
+        # Fast evaluation for the most basic scenario
+        if time_step is None and len(variables) == 0:
+            np.savetxt(
+                file_name,
+                self.solution,
+                fmt="%.6f",
+                delimiter=",",
+                header=""
+                "Time (s),"
+                "X (m),"
+                "Y (m),"
+                "Z (m),"
+                "E0,"
+                "E1,"
+                "E2,"
+                "E3,"
+                "W1 (rad/s),"
+                "W2 (rad/s),"
+                "W3 (rad/s)",
+            )
+            return
+
+        # Not so fast evaluation for general case
+        if variables is None:
+            variables = [
+                "x",
+                "y",
+                "z",
+                "vx",
+                "vy",
+                "vz",
+                "e0",
+                "e1",
+                "e2",
+                "e3",
+                "w1",
+                "w2",
+                "w3",
+            ]
+
+        if time_step is None:
+            time_points = self.time
+        else:
+            time_points = np.arange(self.t_initial, self.t_final, time_step)
+
+        exported_matrix = [time_points]
+        exported_header = "Time (s)"
+
+        # Loop through variables, get points and names (for the header)
+        for variable in variables:
+            if variable in self.__dict__:
+                variable_function = self.__dict__[variable]
+            # Deal with decorated Flight methods
+            else:
+                try:
+                    obj = getattr(self.__class__, variable)
+                    variable_function = obj.__get__(self, self.__class__)
+                except AttributeError as exc:
+                    raise AttributeError(
+                        f"Variable '{variable}' not found in Flight class"
+                    ) from exc
+            variable_points = variable_function(time_points)
+            exported_matrix += [variable_points]
+            exported_header += f", {variable_function.__outputs__[0]}"
+
+        exported_matrix = np.array(exported_matrix).T  # Fix matrix orientation
+
+        np.savetxt(
+            file_name,
+            exported_matrix,
+            fmt="%.6f",
+            delimiter=",",
+            header=exported_header,
+            encoding="utf-8",
         )
 
-    @deprecated(
-        reason="Moved to FlightDataExporter.export_sensor_data()",
-        version="v1.12.0",
-        alternative="rocketpy.simulation.flight_data_exporter.FlightDataExporter.export_sensor_data",
-    )
     def export_sensor_data(self, file_name, sensor=None):
-        """
-        .. deprecated:: 1.11
-           Use :class:`rocketpy.simulation.flight_data_exporter.FlightDataExporter`
-           and call ``.export_sensor_data(...)``.
-        """
-        return FlightDataExporter(self).export_sensor_data(file_name, sensor=sensor)
+        """Exports sensors data to a file. The file format can be either .csv or
+        .json.
 
-    @deprecated(
-        reason="Moved to FlightDataExporter.export_kml()",
-        version="v1.12.0",
-        alternative="rocketpy.simulation.flight_data_exporter.FlightDataExporter.export_kml",
-    )
-    def export_kml(
+        Parameters
+        ----------
+        file_name : str
+            The file name or path of the exported file. Example: flight_data.csv
+            Do not use forbidden characters, such as / in Linux/Unix and
+            `<, >, :, ", /, \\, | ?, *` in Windows.
+        sensor : Sensor, string, optional
+            The sensor to export data from. Can be given as a Sensor object or
+            as a string with the sensor name. If None, all sensors data will be
+            exported. Default is None.
+        """
+        if sensor is None:
+            data_dict = {}
+            for used_sensor, measured_data in self.sensor_data.items():
+                data_dict[used_sensor.name] = measured_data
+        else:
+            # export data of only that sensor
+            data_dict = {}
+
+            if not isinstance(sensor, str):
+                data_dict[sensor.name] = self.sensor_data[sensor]
+            else:  # sensor is a string
+                matching_sensors = [s for s in self.sensor_data if s.name == sensor]
+
+                if len(matching_sensors) > 1:
+                    data_dict[sensor] = []
+                    for s in matching_sensors:
+                        data_dict[s.name].append(self.sensor_data[s])
+                elif len(matching_sensors) == 1:
+                    data_dict[sensor] = self.sensor_data[matching_sensors[0]]
+                else:
+                    raise ValueError("Sensor not found in the Flight.sensor_data.")
+
+        with open(file_name, "w") as file:
+            json.dump(data_dict, file)
+        print("Sensor data exported to: ", file_name)
+
+    def export_kml(  # TODO: should be moved out of this class.
         self,
         file_name="trajectory.kml",
         time_step=None,
@@ -3320,18 +3385,78 @@ class Flight:
         color="641400F0",
         altitude_mode="absolute",
     ):
+        """Exports flight data to a .kml file, which can be opened with Google
+        Earth to display the rocket's trajectory.
+
+        Parameters
+        ----------
+        file_name : string
+            The file name or path of the exported file. Example: flight_data.csv
+        time_step : float, optional
+            Time step desired for the data. If None, all integration time steps
+            will be exported. Otherwise, linear interpolation is carried out to
+            calculate values at the desired time steps. Example: 0.001.
+        extrude: bool, optional
+            To be used if you want to project the path over ground by using an
+            extruded polygon. In case False only the linestring containing the
+            flight path will be created. Default is True.
+        color : str, optional
+            Color of your trajectory path, need to be used in specific kml
+            format. Refer to http://www.zonums.com/gmaps/kml_color/ for more
+            info.
+        altitude_mode: str
+            Select elevation values format to be used on the kml file. Use
+            'relativetoground' if you want use Above Ground Level elevation, or
+            'absolute' if you want to parse elevation using Above Sea Level.
+            Default is 'relativetoground'. Only works properly if the ground
+            level is flat. Change to 'absolute' if the terrain is to irregular
+            or contains mountains.
         """
-        .. deprecated:: 1.11
-           Use :class:`rocketpy.simulation.flight_data_exporter.FlightDataExporter`
-           and call ``.export_kml(...)``.
-        """
-        return FlightDataExporter(self).export_kml(
-            file_name=file_name,
-            time_step=time_step,
-            extrude=extrude,
-            color=color,
-            altitude_mode=altitude_mode,
-        )
+        # Define time points vector
+        if time_step is None:
+            time_points = self.time
+        else:
+            time_points = np.arange(self.t_initial, self.t_final + time_step, time_step)
+        # Open kml file with simplekml library
+        kml = simplekml.Kml(open=1)
+        trajectory = kml.newlinestring(name="Rocket Trajectory - Powered by RocketPy")
+
+        if altitude_mode == "relativetoground":
+            # In this mode the elevation data will be the Above Ground Level
+            # elevation. Only works properly if the ground level is similar to
+            # a plane, i.e. it might not work well if the terrain has mountains
+            coords = [
+                (
+                    self.longitude.get_value_opt(t),
+                    self.latitude.get_value_opt(t),
+                    self.altitude.get_value_opt(t),
+                )
+                for t in time_points
+            ]
+            trajectory.coords = coords
+            trajectory.altitudemode = simplekml.AltitudeMode.relativetoground
+        else:  # altitude_mode == 'absolute'
+            # In this case the elevation data will be the Above Sea Level elevation
+            # Ensure you use the correct value on self.env.elevation, otherwise
+            # the trajectory path can be offset from ground
+            coords = [
+                (
+                    self.longitude.get_value_opt(t),
+                    self.latitude.get_value_opt(t),
+                    self.z.get_value_opt(t),
+                )
+                for t in time_points
+            ]
+            trajectory.coords = coords
+            trajectory.altitudemode = simplekml.AltitudeMode.absolute
+        # Modify style of trajectory linestring
+        trajectory.style.linestyle.color = color
+        trajectory.style.polystyle.color = color
+        if extrude:
+            trajectory.extrude = 1
+        # Save the KML
+        kml.save(file_name)
+        print("File ", file_name, " saved with success!")
 
     def info(self):
         """Prints out a summary of the data available about the Flight."""
@@ -3348,7 +3473,7 @@ class Flight:
             yield i, node_list[i]
             i += 1
 
-    def to_dict(self, **kwargs):
+    def to_dict(self, include_outputs=False):
         data = {
             "rocket": self.rocket,
             "env": self.env,
@@ -3377,6 +3502,7 @@ class Flight:
             "x_impact": self.x_impact,
             "y_impact": self.y_impact,
             "t_final": self.t_final,
+            "flight_phases": self.flight_phases,
             "function_evaluations": self.function_evaluations,
             "ax": self.ax,
             "ay": self.ay,
@@ -3390,10 +3516,9 @@ class Flight:
             "M1": self.M1,
             "M2": self.M2,
             "M3": self.M3,
-            "net_thrust": self.net_thrust,
         }
 
-        if kwargs.get("include_outputs", False):
+        if include_outputs:
             data.update(
                 {
                     "time": self.time,
