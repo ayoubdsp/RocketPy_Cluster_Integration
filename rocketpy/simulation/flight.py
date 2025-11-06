@@ -4,11 +4,9 @@ import math
 import warnings
 from copy import deepcopy
 from functools import cached_property
-
 import numpy as np
 import simplekml
 from scipy.integrate import BDF, DOP853, LSODA, RK23, RK45, OdeSolver, Radau
-
 from ..mathutils.function import Function, funcify_method
 from ..mathutils.vector_matrix import Matrix, Vector
 from ..plots.flight_plots import _FlightPlots
@@ -1010,8 +1008,7 @@ class Flight:
                                             i += 1
                                         # Create flight phase for time after inflation
                                         callbacks = [
-                                            lambda self,
-                                            parachute_cd_s=parachute.cd_s: setattr(
+                                            lambda self, parachute_cd_s=parachute.cd_s: setattr(
                                                 self, "parachute_cd_s", parachute_cd_s
                                             )
                                         ]
@@ -1404,7 +1401,9 @@ class Flight:
         # Hey! We will finish this function later, now we just can use u_dot
         return self.u_dot_generalized(t, u, post_processing=post_processing)
 
-    def u_dot(self, t, u, post_processing=False):  # pylint: disable=too-many-locals,too-many-statements
+    def u_dot(
+        self, t, u, post_processing=False
+    ):  # pylint: disable=too-many-locals,too-many-statements
         """Calculates derivative of u state vector with respect to time
         when rocket is flying in 6 DOF motion during ascent out of rail
         and descent without parachute.
@@ -1718,90 +1717,103 @@ class Flight:
 
         return u_dot
 
-# Dans flight.py, dans la classe Flight
-
     def u_dot_generalized(self, t, u, post_processing=False):
         """
-        Calcule la dérivée du vecteur d'état u (6-DOF) en utilisant un formalisme généralisé
-        adapté pour les clusters moteurs et incluant toutes les forces physiques.
+        Calculates the derivative of the state vector u (6-DOF) using a
+        generalized formalism suitable for motor clusters and including all
+        physical forces.
         """
-        # Extraction des variables d'état
-        x, y, z, vx, vy, vz, e0, e1, e2, e3, w1, w2, w3 = u
+        # State variable extraction
+        _, _, z, vx, vy, vz, e0, e1, e2, e3, w1, w2, w3 = u
 
-        # Création des vecteurs pour les calculs
+        # Create vectors for calculations
         velocity_vector = Vector([vx, vy, vz])
         euler_params = [e0, e1, e2, e3]
         angular_velocity_vector = Vector([w1, w2, w3])
         w = angular_velocity_vector
 
-        # Propriétés de la fusée à l'instant t
+        # Rocket properties at time t
         total_mass = self.rocket.total_mass.get_value_opt(t)
-        
-        # Matrice de transformation du repère corps au repère inertiel
+
+        # Transformation matrix from body frame to inertial frame
         K = Matrix.transformation(euler_params)
         Kt = K.transpose
 
-        # --- Calcul des forces et moments ---
-        
-        # Gravité dans le repère corps
-        gravity_force_inertial = Vector([0, 0, -total_mass * self.env.gravity.get_value_opt(z)])
+        # --- Forces and Moments Calculation ---
+
+        # Gravity in body frame
+        gravity_force_inertial = Vector(
+            [0, 0, -total_mass * self.env.gravity.get_value_opt(z)]
+        )
         gravity_force_body = Kt @ gravity_force_inertial
 
-        # --- DÉBUT DU BLOC DE CALCUL AÉRODYNAMIQUE INTÉGRÉ ---
+        # --- START OF INTEGRATED AERODYNAMIC CALCULATION BLOCK ---
         R1, R2, R3, M1, M2, M3 = 0, 0, 0, 0, 0, 0
-        
+
         # Get freestream speed
         wind_velocity_x = self.env.wind_velocity_x.get_value_opt(z)
         wind_velocity_y = self.env.wind_velocity_y.get_value_opt(z)
         speed_of_sound = self.env.speed_of_sound.get_value_opt(z)
         rho = self.env.density.get_value_opt(z)
 
-        # Vitesse relative au vent dans le repère inertiel
-        stream_velocity_inertial = Vector([wind_velocity_x - vx, wind_velocity_y - vy, -vz])
+        # Relative wind speed in inertial frame
+        stream_velocity_inertial = Vector(
+            [wind_velocity_x - vx, wind_velocity_y - vy, -vz]
+        )
         free_stream_speed = abs(stream_velocity_inertial)
         free_stream_mach = free_stream_speed / speed_of_sound
-        
-        # Déterminer la traînée de base de la fusée
+
+        # Determine the base drag of the rocket
         if t < self.rocket.motor.burn_out_time:
             drag_coeff = self.rocket.power_on_drag.get_value_opt(free_stream_mach)
         else:
             drag_coeff = self.rocket.power_off_drag.get_value_opt(free_stream_mach)
-        
-        R3_base_drag = -0.5 * rho * (free_stream_speed**2) * self.rocket.area * drag_coeff
+
+        R3_base_drag = (
+            -0.5 * rho * (free_stream_speed**2) * self.rocket.area * drag_coeff
+        )
         R3 += R3_base_drag
 
-        # Ajouter la traînée des aérofreins si actifs
+        # Add air brakes drag if active
         for air_brakes in self.rocket.air_brakes:
             if air_brakes.deployment_level > 0:
-                air_brakes_cd = air_brakes.drag_coefficient.get_value_opt(air_brakes.deployment_level, free_stream_mach)
-                air_brakes_force = -0.5 * rho * (free_stream_speed**2) * air_brakes.reference_area * air_brakes_cd
+                air_brakes_cd = air_brakes.drag_coefficient.get_value_opt(
+                    air_brakes.deployment_level, free_stream_mach
+                )
+                air_brakes_force = (
+                    -0.5
+                    * rho
+                    * (free_stream_speed**2)
+                    * air_brakes.reference_area
+                    * air_brakes_cd
+                )
                 if air_brakes.override_rocket_drag:
                     R3 = air_brakes_force
                 else:
                     R3 += air_brakes_force
-        
-        # Moment dû à l'excentricité du CdP
+
+        # Moment due to CoP eccentricity
         M1 += self.rocket.cp_eccentricity_y * R3
         M2 -= self.rocket.cp_eccentricity_x * R3
 
-        # Vitesse de la fusée dans le repère corps
+        # Rocket velocity in body frame
         velocity_body_frame = Kt @ velocity_vector
-        
-        # Calculer la portance et le moment pour chaque surface aérodynamique
-        for aero_surface, position in self.rocket.aerodynamic_surfaces:
+
+        # Calculate lift and moment for each aerodynamic surface
+        for aero_surface, _ in self.rocket.aerodynamic_surfaces:
             comp_cp = self.rocket.surfaces_cp_to_cdm[aero_surface]
-            # Vitesse absolue du composant dans le repère corps
+            # Component absolute velocity in body frame
             comp_vb = velocity_body_frame + (w ^ comp_cp)
-            # Vitesse du vent à l'altitude du composant
+            # Wind velocity at component altitude
             comp_z = z + (K @ comp_cp).z
             comp_wind_vx = self.env.wind_velocity_x.get_value_opt(comp_z)
             comp_wind_vy = self.env.wind_velocity_y.get_value_opt(comp_z)
-            # Vitesse du vent dans le repère corps
+            # Wind velocity in body frame
             comp_wind_vb = Kt @ Vector([comp_wind_vx, comp_wind_vy, 0])
             comp_stream_velocity = comp_wind_vb - comp_vb
             comp_stream_speed = abs(comp_stream_velocity)
             comp_stream_mach = comp_stream_speed / speed_of_sound
-            
+
             comp_reynolds = (
                 self.env.density.get_value_opt(comp_z)
                 * comp_stream_speed
@@ -1809,9 +1821,15 @@ class Flight:
                 / self.env.dynamic_viscosity.get_value_opt(comp_z)
             )
 
-            # Calcul des forces et moments pour la surface
+            # Calculate forces and moments for the surface
             X, Y, Z, M, N, L = aero_surface.compute_forces_and_moments(
-                comp_stream_velocity, comp_stream_speed, comp_stream_mach, rho, comp_cp, w, comp_reynolds
+                comp_stream_velocity,
+                comp_stream_speed,
+                comp_stream_mach,
+                rho,
+                comp_cp,
+                w,
+                comp_reynolds,
             )
             R1 += X
             R2 += Y
@@ -1819,72 +1837,90 @@ class Flight:
             M1 += M
             M2 += N
             M3 += L
-            
-        # Moment dû à l'excentricité du CdP
+
+        # Moment due to CoP eccentricity
         M3 += self.rocket.cp_eccentricity_x * R2 - self.rocket.cp_eccentricity_y * R1
-        
-        # Création des vecteurs finaux pour les forces et moments aéro
+
+        # Create final vectors for aero forces and moments
         R_aero_body = Vector([R1, R2, R3])
         M_aero_body = Vector([M1, M2, M3])
-        # --- FIN DU BLOC DE CALCUL AÉRODYNAMIQUE ---
+        # --- END OF AERODYNAMIC CALCULATION BLOCK ---
 
-        # Poussée et moment du cluster/moteur
-        if hasattr(self.rocket.motor, 'get_total_thrust_vector'): # C'est un ClusterMotor
+        # Thrust and moment from cluster/motor
+        if hasattr(self.rocket.motor, "get_total_thrust_vector"):  # It's a ClusterMotor
             thrust_vector_body = self.rocket.motor.get_total_thrust_vector(t)
             rocket_cm = self.rocket.center_of_mass.get_value_opt(t)
             moment_vector_body = self.rocket.motor.get_total_moment(t, rocket_cm)
             net_thrust_scalar = abs(thrust_vector_body)
-        else: # C'est un moteur standard
+        else:  # It's a standard motor
             pressure = self.env.pressure.get_value_opt(z)
-            net_thrust_scalar = max(self.rocket.motor.thrust.get_value_opt(t) + self.rocket.motor.pressure_thrust(pressure), 0)
-            thrust_vector_body = Vector([0, 0, net_thrust_scalar]) # Poussée axiale
-            moment_vector_body = Vector([ # Moment dû à l'excentricité
-                self.rocket.thrust_eccentricity_y * net_thrust_scalar,
-                -self.rocket.thrust_eccentricity_x * net_thrust_scalar,
-                0
-            ])
+            net_thrust_scalar = max(
+                self.rocket.motor.thrust.get_value_opt(t)
+                + self.rocket.motor.pressure_thrust(pressure),
+                0,
+            )
+            thrust_vector_body = Vector([0, 0, net_thrust_scalar])  # Axial thrust
+            moment_vector_body = Vector(
+                [  # Moment due to eccentricity
+                    self.rocket.thrust_eccentricity_y * net_thrust_scalar,
+                    -self.rocket.thrust_eccentricity_x * net_thrust_scalar,
+                    0,
+                ]
+            )
 
-        # Force et moment totaux dans le repère corps
+        # Total force and moment in body frame
         total_force_body = gravity_force_body + thrust_vector_body + R_aero_body
         total_moment_body = moment_vector_body + M_aero_body
 
-        # --- Équations du mouvement ---
+        # --- Equations of Motion ---
 
-        # Accélération linéaire
+        # Linear acceleration
         linear_acceleration_body = total_force_body / total_mass
         linear_acceleration_inertial = K @ linear_acceleration_body
-        
-        # Accélération angulaire (Équation d'Euler pour corps rigide à masse variable)
+
+        # Angular acceleration (Euler's equation for rigid body with variable mass)
         inertia_tensor = self.rocket.get_inertia_tensor_at_time(t)
         I_w = inertia_tensor @ angular_velocity_vector
         w_cross_Iw = angular_velocity_vector.cross(I_w)
         I_dot = self.rocket.get_inertia_tensor_derivative_at_time(t)
-        
-        angular_acceleration_body = inertia_tensor.inverse @ (total_moment_body - w_cross_Iw - (I_dot @ angular_velocity_vector))
-        
-        # Dérivées des paramètres d'Euler
-        e0dot = 0.5 * (-w1*e1 - w2*e2 - w3*e3)
-        e1dot = 0.5 * ( w1*e0 + w3*e2 - w2*e3)
-        e2dot = 0.5 * ( w2*e0 - w3*e1 + w1*e3)
-        e3dot = 0.5 * ( w3*e0 + w2*e1 - w1*e2)
 
-        # Assemblage du vecteur dérivé
+        angular_acceleration_body = inertia_tensor.inverse @ (
+            total_moment_body - w_cross_Iw - (I_dot @ angular_velocity_vector)
+        )
+
+        # Euler parameters derivatives
+        e0dot = 0.5 * (-w1 * e1 - w2 * e2 - w3 * e3)
+        e1dot = 0.5 * (w1 * e0 + w3 * e2 - w2 * e3)
+        e2dot = 0.5 * (w2 * e0 - w3 * e1 + w1 * e3)
+        e3dot = 0.5 * (w3 * e0 + w2 * e1 - w1 * e2)
+
+        # Assemble the derivative vector
         u_dot = [
-            vx, vy, vz,
+            vx,
+            vy,
+            vz,
             *linear_acceleration_inertial,
-            e0dot, e1dot, e2dot, e3dot,
-            *angular_acceleration_body
+            e0dot,
+            e1dot,
+            e2dot,
+            e3dot,
+            *angular_acceleration_body,
         ]
-        
-        # Post-processing (si nécessaire)
-        if post_processing:
-            self.__post_processed_variables.append([
-                t, *linear_acceleration_inertial, *angular_acceleration_body,
-                *R_aero_body, *total_moment_body, net_thrust_scalar
-            ])
-            
-        return u_dot
 
+        # Post-processing (if necessary)
+        if post_processing:
+            self.__post_processed_variables.append(
+                [
+                    t,
+                    *linear_acceleration_inertial,
+                    *angular_acceleration_body,
+                    *R_aero_body,
+                    *total_moment_body,
+                    net_thrust_scalar,
+                ]
+            )
+
+        return u_dot
 
     def u_dot_parachute(self, t, u, post_processing=False):
         """Calculates derivative of u state vector with respect to time
@@ -1924,8 +1960,8 @@ class Flight:
         mp = self.rocket.dry_mass
 
         # Define constants
-        ka = 1  # Added mass coefficient (depends on parachute's porosity)
-        R = 1.5  # Parachute radius
+        # ka = 1  # Added mass coefficient (depends on parachute's porosity)
+        # R = 1.5  # Parachute radius
         # to = 1.2
         # eta = 1
         # Rdot = (6 * R * (1 - eta) / (1.2**6)) * (
@@ -1934,7 +1970,7 @@ class Flight:
         # Rdot = 0
 
         # Calculate added mass
-        ma = ka * rho * (4 / 3) * np.pi * R**3
+        ma = 0
 
         # Calculate freestream speed
         freestream_x = vx - wind_velocity_x
@@ -1950,7 +1986,7 @@ class Flight:
         Dz = pseudo_drag * freestream_z
         ax = Dx / (mp + ma)
         ay = Dy / (mp + ma)
-        az = (Dz - 9.8 * mp) / (mp + ma)
+        az = (Dz - self.env.gravity.get_value_opt(z) * mp) / (mp + ma)
 
         if post_processing:
             self.__post_processed_variables.append(
@@ -2028,7 +2064,7 @@ class Flight:
 
     @funcify_method("Time (s)", "Y (m)", "spline", "constant")
     def y(self):
-        """Rocket y position relative to the lauch pad as a Function of
+        """Rocket y position relative to the launch pad as a Function of
         time."""
         return self.solution_array[:, [0, 2]]
 
@@ -2924,7 +2960,7 @@ class Flight:
         "Time (s)", "Horizontal Distance to Launch Point (m)", "spline", "constant"
     )
     def drift(self):
-        """Rocket horizontal distance to tha launch point, in meters, as a
+        """Rocket horizontal distance to the launch point, in meters, as a
         Function of time."""
         return np.column_stack(
             (self.time, (self.x[:, 1] ** 2 + self.y[:, 1] ** 2) ** 0.5)
@@ -3473,7 +3509,7 @@ class Flight:
             yield i, node_list[i]
             i += 1
 
-    def to_dict(self, include_outputs=False):
+    def to_dict(self, include_outputs=False, **_kwargs):
         data = {
             "rocket": self.rocket,
             "env": self.env,
@@ -3696,9 +3732,7 @@ class Flight:
             new_index = (
                 index - 1
                 if flight_phase.t < previous_phase.t
-                else index + 1
-                if flight_phase.t > next_phase.t
-                else index
+                else index + 1 if flight_phase.t > next_phase.t else index
             )
             flight_phase.t += adjust
             self.add(flight_phase, new_index)
