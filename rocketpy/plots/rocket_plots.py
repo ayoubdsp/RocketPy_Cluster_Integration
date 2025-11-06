@@ -413,33 +413,38 @@ class _RocketPlots:
 
     def _draw_motor(self, last_radius, last_x, ax, vis_args, plane="xz"):
         """Draws the motor from motor patches"""
-        
-        # Obtenir les patches (logique cluster/simple est dans la fonction ci-dessous)
+
         motor_patches = self._generate_motor_patches(ax, plane)
 
-        # Dessiner les patches
         if not isinstance(self.rocket.motor, EmptyMotor):
-            
+
             if isinstance(self.rocket.motor, ClusterMotor):
-                # Logique pour Cluster
+
                 for patch in motor_patches:
                     ax.add_patch(patch)
-                
-                # Raccorder le tube au début (point z min) du cluster
+
                 if self.rocket.motor.positions:
-                    # Trouve le z le plus proche de la coiffe
-                    cluster_z_positions = [pos[2] for pos in self.rocket.motor.positions]
-                    z_connector = min(cluster_z_positions) if self.rocket._csys == 1 else max(cluster_z_positions)
-                    self._draw_nozzle_tube(last_radius, last_x, z_connector, ax, vis_args)
-            
+
+                    cluster_z_positions = [
+                        pos[2] for pos in self.rocket.motor.positions
+                    ]
+                    z_connector = (
+                        min(cluster_z_positions)
+                        if self.rocket._csys == 1
+                        else max(cluster_z_positions)
+                    )
+                    self._draw_nozzle_tube(
+                        last_radius, last_x, z_connector, ax, vis_args
+                    )
+
             else:
-                # Logique originale pour Moteur Simple
+
                 total_csys = self.rocket._csys * self.rocket.motor._csys
                 nozzle_position = (
-                    self.rocket.motor_position + self.rocket.motor.nozzle_position * total_csys
+                    self.rocket.motor_position
+                    + self.rocket.motor.nozzle_position * total_csys
                 )
-                
-                # Ajouter la tuyère (logique originale)
+
                 nozzle = self.rocket.motor.plots._generate_nozzle(
                     translate=(nozzle_position, 0), csys=self.rocket._csys
                 )
@@ -448,104 +453,86 @@ class _RocketPlots:
                 outline = self.rocket.motor.plots._generate_motor_region(
                     list_of_patches=motor_patches
                 )
-                # Ajouter l'outline en premier
+
                 ax.add_patch(outline)
                 for patch in motor_patches:
                     ax.add_patch(patch)
 
-                self._draw_nozzle_tube(last_radius, last_x, nozzle_position, ax, vis_args)
+                self._draw_nozzle_tube(
+                    last_radius, last_x, nozzle_position, ax, vis_args
+                )
+
     def _generate_motor_patches(self, ax, plane="xz"):
         """Generates motor patches for drawing"""
         motor_patches = []
         total_csys = self.rocket._csys * self.rocket.motor._csys
 
-        # ################################################
-        # ## LOGIQUE D'AFFICHAGE POUR CLUSTER DE MOTEURS ##
-        # ################################################
         if isinstance(self.rocket.motor, ClusterMotor):
             cluster = self.rocket.motor
-            all_sub_patches = [] # Pour l'outline global
-            
+            all_sub_patches = []  # Pour l'outline global
+
             for sub_motor, sub_pos in zip(cluster.motors, cluster.positions):
-                # sub_pos est [x, y, z]
-                motor_longitudinal_pos = sub_pos[2] # Position Z du moteur
-                
-                # Déterminer le décalage (offset)
+
+                motor_longitudinal_pos = sub_pos[2]
+
                 offset = 0
                 if plane == "xz":
-                    offset = sub_pos[0]  # Coordonnée X
+                    offset = sub_pos[0]
                 elif plane == "yz":
-                    offset = sub_pos[1]  # Coordonnée Y
+                    offset = sub_pos[1]
 
-                # `sub_total_csys` convertit un déplacement relatif au moteur
-                # en un déplacement relatif à la fusée.
                 sub_total_csys = self.rocket._csys * sub_motor._csys
-                
-                # On réutilise la logique de SolidMotor, mais avec un offset
+
                 if isinstance(sub_motor, SolidMotor):
-                    current_motor_patches = [] # Patches pour CE moteur
-                    
-                    # Position Z du centre de masse des grains DANS LE REPERE FUSÉE
+                    current_motor_patches = []
+
                     grains_cm_pos = (
                         motor_longitudinal_pos
                         + sub_motor.grains_center_of_mass_position * sub_total_csys
                     )
                     ax.scatter(
-                        grains_cm_pos.real, # Utiliser .real pour éviter ComplexWarning
-                        offset, 
+                        grains_cm_pos.real,
+                        offset,
                         color="brown",
-                        label=f"Grains CM ({sub_pos[0]:.2f}, {sub_pos[1]:.2f})", 
+                        label=f"Grains CM ({sub_pos[0]:.2f}, {sub_pos[1]:.2f})",
                         s=8,
                         zorder=10,
                     )
 
-                    # `translate` prend (pos_z, pos_y_offset)
-                    # Ces fonctions utilisent le _csys interne du sub_motor (qui est 1)
                     chamber = sub_motor.plots._generate_combustion_chamber(
                         translate=(grains_cm_pos.real, offset), label=None
                     )
                     grains = sub_motor.plots._generate_grains(
                         translate=(grains_cm_pos.real, offset)
                     )
-                    
-                    # Position Z de la tuyère DANS LE REPERE FUSÉE
+
                     nozzle_position = (
                         motor_longitudinal_pos
                         + sub_motor.nozzle_position * sub_total_csys
                     )
-                    
-                    # ***** CORRECTION ICI *****
-                    # On ne passe PAS de 'csys' !
-                    # On laisse la fonction _generate_nozzle utiliser son
-                    # propre _csys interne (qui est 1, tail_to_nose),
-                    # car 'nozzle_position' est déjà la coordonnée absolue.
+
                     nozzle = sub_motor.plots._generate_nozzle(
                         translate=(nozzle_position.real, offset)
                     )
-                    # **************************
-                    
+
                     current_motor_patches += [chamber, *grains, nozzle]
                     all_sub_patches.extend(current_motor_patches)
 
-            # Créer un outline global pour tous les moteurs
             if all_sub_patches:
-                # Utiliser .plots du premier moteur pour la méthode
+
                 outline = self.rocket.motor.motors[0].plots._generate_motor_region(
                     list_of_patches=all_sub_patches
                 )
-                motor_patches.append(outline) # Mettre l'outline en premier
+                motor_patches.append(outline)  # Mettre l'outline en premier
                 motor_patches.extend(all_sub_patches)
 
-        # #####################################
-        # ## LOGIQUE ORIGINALE (MOTEUR SIMPLE) ##
-        # #####################################
         elif isinstance(self.rocket.motor, SolidMotor):
             grains_cm_position = (
                 self.rocket.motor_position
                 + self.rocket.motor.grains_center_of_mass_position * total_csys
             )
             ax.scatter(
-                grains_cm_position.real, # .real
+                grains_cm_position.real,  # .real
                 0,
                 color="brown",
                 label="Grains Center of Mass",
@@ -554,10 +541,10 @@ class _RocketPlots:
             )
 
             chamber = self.rocket.motor.plots._generate_combustion_chamber(
-                translate=(grains_cm_position.real, 0), label=None # .real
+                translate=(grains_cm_position.real, 0), label=None  # .real
             )
             grains = self.rocket.motor.plots._generate_grains(
-                translate=(grains_cm_position.real, 0) # .real
+                translate=(grains_cm_position.real, 0)  # .real
             )
 
             motor_patches += [chamber, *grains]
@@ -568,7 +555,7 @@ class _RocketPlots:
                 + self.rocket.motor.grains_center_of_mass_position * total_csys
             )
             ax.scatter(
-                grains_cm_position.real, # .real
+                grains_cm_position.real,  # .real
                 0,
                 color="brown",
                 label="Grains Center of Mass",
@@ -580,16 +567,16 @@ class _RocketPlots:
                 translate=(self.rocket.motor_position, 0), csys=total_csys
             )
             chamber = self.rocket.motor.plots._generate_combustion_chamber(
-                translate=(grains_cm_position.real, 0), label=None # .real
+                translate=(grains_cm_position.real, 0), label=None  # .real
             )
             grains = self.rocket.motor.plots._generate_grains(
-                translate=(grains_cm_position.real, 0) # .real
+                translate=(grains_cm_position.real, 0)  # .real
             )
             motor_patches += [chamber, *grains]
             for tank, center in tanks_and_centers:
                 ax.scatter(
-                    center[0].real, # .real
-                    center[1].real, # .real
+                    center[0].real,  # .real
+                    center[1].real,  # .real
                     color="black",
                     alpha=0.2,
                     s=5,
@@ -603,8 +590,8 @@ class _RocketPlots:
             )
             for tank, center in tanks_and_centers:
                 ax.scatter(
-                    center[0].real, # .real
-                    center[1].real, # .real
+                    center[0].real,  # .real
+                    center[1].real,  # .real
                     color="black",
                     alpha=0.2,
                     s=4,
@@ -672,17 +659,13 @@ class _RocketPlots:
 
     def _draw_center_of_mass_and_pressure(self, ax):
         """Draws the center of mass and center of pressure of the rocket."""
-        # Draw center of mass and center of pressure
-        
-        # MODIFICATION 1: Récupérer le vecteur CM et extraire .z
+
         cm_vector = self.rocket.center_of_mass(0)
-        # On prend la partie réelle pour éviter les warnings
-        cm_z = float(cm_vector.z.real) 
-        
-        # On suppose que le CM est sur l'axe pour le dessin 2D
+
+        cm_z = float(cm_vector.z.real)
+
         ax.scatter(cm_z, 0, color="#1565c0", label="Center of Mass", s=10)
 
-        # MODIFICATION 2: Prendre la partie réelle du CP aussi
         cp_z = float(self.rocket.cp_position(0).real)
         ax.scatter(
             cp_z, 0, label="Static Center of Pressure", color="red", s=10, zorder=10
