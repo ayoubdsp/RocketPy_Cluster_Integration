@@ -532,7 +532,7 @@ class _RocketPlots:
                 + self.rocket.motor.grains_center_of_mass_position * total_csys
             )
             ax.scatter(
-                grains_cm_position.real,  # .real
+                grains_cm_position.real,  
                 0,
                 color="brown",
                 label="Grains Center of Mass",
@@ -541,10 +541,10 @@ class _RocketPlots:
             )
 
             chamber = self.rocket.motor.plots._generate_combustion_chamber(
-                translate=(grains_cm_position.real, 0), label=None  # .real
+                translate=(grains_cm_position.real, 0), label=None 
             )
             grains = self.rocket.motor.plots._generate_grains(
-                translate=(grains_cm_position.real, 0)  # .real
+                translate=(grains_cm_position.real, 0) 
             )
 
             motor_patches += [chamber, *grains]
@@ -555,7 +555,7 @@ class _RocketPlots:
                 + self.rocket.motor.grains_center_of_mass_position * total_csys
             )
             ax.scatter(
-                grains_cm_position.real,  # .real
+                grains_cm_position.real, 
                 0,
                 color="brown",
                 label="Grains Center of Mass",
@@ -567,16 +567,16 @@ class _RocketPlots:
                 translate=(self.rocket.motor_position, 0), csys=total_csys
             )
             chamber = self.rocket.motor.plots._generate_combustion_chamber(
-                translate=(grains_cm_position.real, 0), label=None  # .real
+                translate=(grains_cm_position.real, 0), label=None  
             )
             grains = self.rocket.motor.plots._generate_grains(
-                translate=(grains_cm_position.real, 0)  # .real
+                translate=(grains_cm_position.real, 0) 
             )
             motor_patches += [chamber, *grains]
             for tank, center in tanks_and_centers:
                 ax.scatter(
-                    center[0].real,  # .real
-                    center[1].real,  # .real
+                    center[0].real,  
+                    center[1].real,  
                     color="black",
                     alpha=0.2,
                     s=5,
@@ -590,8 +590,8 @@ class _RocketPlots:
             )
             for tank, center in tanks_and_centers:
                 ax.scatter(
-                    center[0].real,  # .real
-                    center[1].real,  # .real
+                    center[0].real, 
+                    center[1].real,  
                     color="black",
                     alpha=0.2,
                     s=4,
