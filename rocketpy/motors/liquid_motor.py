@@ -307,8 +307,7 @@ class LiquidMotor(Motor):
         Function
             Total propellant inertia tensor 11 component at time t relative to total propellant CoM.
         """
-        I_11_prop_relative_to_prop_com = self.propellant_I_11_from_propellant_CM
-        return I_11_prop_relative_to_prop_com
+        return self.propellant_I_11_from_propellant_CM
 
     @funcify_method("Time (s)", "Inertia I_22 (kg m²)")
     def propellant_I_22(self):
