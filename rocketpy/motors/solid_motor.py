@@ -7,8 +7,15 @@ from ..mathutils.function import Function, funcify_method, reset_funcified_metho
 from ..plots.solid_motor_plots import _SolidMotorPlots
 from ..prints.solid_motor_prints import _SolidMotorPrints
 from .motor import Motor
-
-
+from ..tools import (
+            parallel_axis_theorem_I11,
+            parallel_axis_theorem_I22,
+            parallel_axis_theorem_I33,
+            parallel_axis_theorem_I12,
+            parallel_axis_theorem_I13,
+            parallel_axis_theorem_I23,
+        )
+from ..mathutils.vector_matrix import Vector
 class SolidMotor(Motor):
     """Class to specify characteristics and useful operations for solid motors.
 
@@ -378,16 +385,6 @@ class SolidMotor(Motor):
         self.propellant_I_12_from_propellant_CM = self.propellant_I_12
         self.propellant_I_13_from_propellant_CM = self.propellant_I_13
         self.propellant_I_23_from_propellant_CM = self.propellant_I_23
-        from ..tools import (
-            parallel_axis_theorem_I11,
-            parallel_axis_theorem_I22,
-            parallel_axis_theorem_I33,
-            parallel_axis_theorem_I12,
-            parallel_axis_theorem_I13,
-            parallel_axis_theorem_I23,
-        )
-        from ..mathutils.vector_matrix import Vector
-
         propellant_com_func = self.center_of_propellant_mass
 
         propellant_com_vector_func = Function(
