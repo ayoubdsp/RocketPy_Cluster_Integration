@@ -225,15 +225,7 @@ class _RocketPlots:
     def _draw_aerodynamic_surfaces(self, ax, vis_args, plane):
         """Draws the aerodynamic surfaces and saves the position of the points
         of interest for the tubes."""
-        # List of drawn surfaces with the position of points of interest
-        # and the radius of the rocket at that point
         drawn_surfaces = []
-        # Idea is to get the shape of each aerodynamic surface in their own
-        # coordinate system and then plot them in the rocket coordinate system
-        # using the position of each surface
-        # For the tubes, the surfaces need to be checked in order to check for
-        # diameter changes. The final point of the last surface is the final
-        # point of the last tube
 
         for surface, position in self.rocket.aerodynamic_surfaces:
             if isinstance(surface, NoseCone):
@@ -265,14 +257,14 @@ class _RocketPlots:
             color=vis_args["nose"],
             linewidth=vis_args["line_width"],
         )
-        # close the nosecone
+        
         ax.plot(
             [x_nosecone[-1], x_nosecone[-1]],
             [y_nosecone[-1], -y_nosecone[-1]],
             color=vis_args["nose"],
             linewidth=vis_args["line_width"],
         )
-        # Add the nosecone to the list of drawn surfaces
+        
         drawn_surfaces.append(
             (surface, x_nosecone[-1], surface.rocket_radius, x_nosecone[-1])
         )
@@ -288,7 +280,7 @@ class _RocketPlots:
         ax.plot(
             x_tail, -y_tail, color=vis_args["tail"], linewidth=vis_args["line_width"]
         )
-        # close above and below the tail
+       
         ax.plot(
             [x_tail[-1], x_tail[-1]],
             [y_tail[-1], -y_tail[-1]],
@@ -301,7 +293,7 @@ class _RocketPlots:
             color=vis_args["tail"],
             linewidth=vis_args["line_width"],
         )
-        # Add the tail to the list of drawn surfaces
+       
         drawn_surfaces.append((surface, position, surface.bottom_radius, x_tail[-1]))
 
     def _draw_fins(self, ax, surface, position, drawn_surfaces, vis_args):
@@ -313,16 +305,15 @@ class _RocketPlots:
         rotation_angles = [2 * np.pi * i / num_fins for i in range(num_fins)]
 
         for angle in rotation_angles:
-            # Create a rotation matrix for the current angle around the x-axis
+            
             rotation_matrix = np.array([[1, 0], [0, np.cos(angle)]])
 
-            # Apply the rotation to the original fin points
+            
             rotated_points_2d = np.dot(rotation_matrix, np.vstack((x_fin, y_fin)))
 
-            # Extract x and y coordinates of the rotated points
             x_rotated, y_rotated = rotated_points_2d
 
-            # Project points above the XY plane back into the XY plane (set z-coordinate to 0)
+           
             x_rotated = np.where(
                 rotated_points_2d[1] > 0, rotated_points_2d[0], x_rotated
             )
@@ -344,20 +335,20 @@ class _RocketPlots:
         surface,
         position,
         drawn_surfaces,
-        vis_args,  # pylint: disable=unused-argument
+        vis_args, 
         plane,
     ):
         """Draws the generic surface and saves the position of the points of interest
         for the tubes."""
         if plane == "xz":
-            # z position of the sensor is the x position in the plot
+            
             x_pos = position[2]
-            # x position of the surface is the y position in the plot
+           
             y_pos = position[0]
         elif plane == "yz":
-            # z position of the surface is the x position in the plot
+           
             x_pos = position[2]
-            # y position of the surface is the y position in the plot
+            
             y_pos = position[1]
         else:  # pragma: no cover
             raise ValueError("Plane must be 'xz' or 'yz'.")
@@ -376,22 +367,19 @@ class _RocketPlots:
         radius = 0
         last_x = 0
         for i, d_surface in enumerate(drawn_surfaces):
-            # Draw the tubes, from the end of the first surface to the beginning
-            # of the next surface, with the radius of the rocket at that point
+            
             surface, position, radius, last_x = d_surface
 
             if i == len(drawn_surfaces) - 1:
-                # If the last surface is a tail, do nothing
+                
                 if isinstance(surface, Tail):
                     continue
-                # Else goes to the end of the surface
+                
                 x_tube = [position, last_x]
                 y_tube = [radius, radius]
                 y_tube_negated = [-radius, -radius]
             else:
-                # If it is not the last surface, the tube goes to the beginning
-                # of the next surface
-                # [next_surface, next_position, next_radius, next_last_x]
+            
                 next_position = drawn_surfaces[i + 1][1]
                 x_tube = [last_x, next_position]
                 y_tube = [radius, radius]
@@ -469,7 +457,7 @@ class _RocketPlots:
 
         if isinstance(self.rocket.motor, ClusterMotor):
             cluster = self.rocket.motor
-            all_sub_patches = []  # Pour l'outline global
+            all_sub_patches = []  
 
             for sub_motor, sub_pos in zip(cluster.motors, cluster.positions):
 
@@ -541,7 +529,7 @@ class _RocketPlots:
             )
 
             chamber = self.rocket.motor.plots._generate_combustion_chamber(
-                translate=(grains_cm_position.real, 0), label=None 
+                translate=(grains_cm_position.real, 0), label=None  
             )
             grains = self.rocket.motor.plots._generate_grains(
                 translate=(grains_cm_position.real, 0) 
@@ -555,7 +543,7 @@ class _RocketPlots:
                 + self.rocket.motor.grains_center_of_mass_position * total_csys
             )
             ax.scatter(
-                grains_cm_position.real, 
+                grains_cm_position.real,  
                 0,
                 color="brown",
                 label="Grains Center of Mass",
@@ -567,7 +555,7 @@ class _RocketPlots:
                 translate=(self.rocket.motor_position, 0), csys=total_csys
             )
             chamber = self.rocket.motor.plots._generate_combustion_chamber(
-                translate=(grains_cm_position.real, 0), label=None  
+                translate=(grains_cm_position.real, 0), label=None 
             )
             grains = self.rocket.motor.plots._generate_grains(
                 translate=(grains_cm_position.real, 0) 
@@ -603,8 +591,6 @@ class _RocketPlots:
 
     def _draw_nozzle_tube(self, last_radius, last_x, nozzle_position, ax, vis_args):
         """Draws the tube from the last surface to the nozzle position."""
-        # Check if nozzle is beyond the last surface, if so draw a tube
-        # to it, with the radius of the last surface
         if self.rocket._csys == 1:
             if nozzle_position < last_x:
                 x_tube = [last_x, nozzle_position]
@@ -623,7 +609,7 @@ class _RocketPlots:
                     color=vis_args["body"],
                     linewidth=vis_args["line_width"],
                 )
-        else:  # if self.rocket._csys == -1:
+        else:  
             if nozzle_position > last_x:
                 x_tube = [last_x, nozzle_position]
                 y_tube = [last_radius, last_radius]
@@ -680,23 +666,22 @@ class _RocketPlots:
             sensor = sensor_pos[0]
             pos = sensor_pos[1]
             if plane == "xz":
-                # z position of the sensor is the x position in the plot
+                
                 x_pos = pos[2]
                 normal_x = sensor.normal_vector.z
-                # x position of the sensor is the y position in the plot
+               
                 y_pos = pos[0]
                 normal_y = sensor.normal_vector.x
             elif plane == "yz":
-                # z position of the sensor is the x position in the plot
+               
                 x_pos = pos[2]
                 normal_x = sensor.normal_vector.z
-                # y position of the sensor is the y position in the plot
+               
                 y_pos = pos[1]
                 normal_y = sensor.normal_vector.y
-            else:  # pragma: no cover
+            else: 
                 raise ValueError("Plane must be 'xz' or 'yz'.")
 
-            # line length is 2/5 of the rocket radius
             line_length = self.rocket.radius / 2.5
 
             ax.plot(
@@ -731,34 +716,34 @@ class _RocketPlots:
         None
         """
 
-        # Rocket draw
+     
         if len(self.rocket.aerodynamic_surfaces) > 0:
             print("\nRocket Draw")
             print("-" * 40)
             self.draw()
 
-        # Mass Plots
+       
         print("\nMass Plots")
         print("-" * 40)
         self.total_mass()
         self.reduced_mass()
 
-        # Aerodynamics Plots
+       
         print("\nAerodynamics Plots")
         print("-" * 40)
 
         # Drag Plots
         print("Drag Plots")
-        print("-" * 20)  # Separator for Drag Plots
+        print("-" * 20)  
         self.drag_curves()
 
         # Stability Plots
         print("\nStability Plots")
-        print("-" * 20)  # Separator for Stability Plots
+        print("-" * 20) 
         self.static_margin()
         self.stability_margin()
 
-        # Thrust-to-Weight Plot
+       
         print("\nThrust-to-Weight Plot")
         print("-" * 40)
         self.thrust_to_weight()
