@@ -15,7 +15,7 @@ import math
 import re
 import time
 from bisect import bisect_left
-
+import warnings
 import dill
 import matplotlib.pyplot as plt
 import numpy as np
@@ -23,10 +23,6 @@ import pytz
 from cftime import num2pydate
 from matplotlib.patches import Ellipse
 from packaging import version as packaging_version
-from rocketpy.mathutils.function import Function
-from rocketpy.mathutils.vector_matrix import Vector
-
-# Mapping of module name and the name of the package that should be installed
 INSTALL_MAPPING = {"IPython": "ipython"}
 
 
@@ -55,6 +51,66 @@ def tuple_handler(value):
             return tuple(value)
         else:
             raise ValueError("value must be a list or tuple of length 1 or 2.")
+            
+def deprecated(reason=None, version=None, alternative=None):
+    """
+    Decorator to mark functions or methods as deprecated.
+
+    This decorator issues a DeprecationWarning when the decorated function
+    is called, indicating that it will be removed in future versions.
+
+    Parameters
+    ----------
+    reason : str, optional
+        Custom deprecation message. If not provided, a default message will be used.
+    version : str, optional
+        Version when the function will be removed. If provided, it will be
+        included in the warning message.
+    alternative : str, optional
+        Name of the alternative function/method that should be used instead.
+        If provided, it will be included in the warning message.
+
+    Returns
+    -------
+    callable
+        The decorated function with deprecation warning functionality.
+
+    Examples
+    --------
+    >>> @deprecated(reason="This function is obsolete", version="v2.0.0",
+    ...             alternative="new_function")
+    ... def old_function():
+    ...     return "old result"
+
+    >>> @deprecated()
+    ... def another_old_function():
+    ...     return "result"
+    """
+
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # Build the deprecation message
+            if reason:
+                message = reason
+            else:
+                message = f"The function `{func.__name__}` is deprecated"
+
+            if version:
+                message += f" and will be removed in {version}"
+
+            if alternative:
+                message += f". Use `{alternative}` instead"
+
+            message += "."
+
+            warnings.warn(message, DeprecationWarning, stacklevel=2)
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
 
 
 def calculate_cubic_hermite_coefficients(x0, x1, y0, yp0, y1, yp1):
@@ -1023,10 +1079,10 @@ def exponential_backoff(max_attempts, base_delay=1, max_delay=60):
 
 
 
-def _pat_dynamic_helper(com_inertia_moment, mass, distance_vec_3d, axes_term_lambda):
-   
-
-
+def _pat_dynamic_helper(com_inertia_moment, mass, distance_vec_3d, axes_term_lambda):  
+    "Local import to break circular dependency with mathutils.function"
+    from rocketpy.mathutils.function import Function 
+    from rocketpy.mathutils.vector_matrix import Vector
     is_dynamic = (
         isinstance(com_inertia_moment, Function)
         or isinstance(mass, Function)
@@ -1058,8 +1114,9 @@ def _pat_dynamic_helper(com_inertia_moment, mass, distance_vec_3d, axes_term_lam
 def _pat_dynamic_product_helper(
     com_inertia_product, mass, distance_vec_3d, product_term_lambda
 ):
-   
-
+    "Local import to break circular dependency with mathutils.function"
+    from rocketpy.mathutils.function import Function
+    from rocketpy.mathutils.vector_matrix import Vector
     is_dynamic = (
         isinstance(com_inertia_product, Function)
         or isinstance(mass, Function)
